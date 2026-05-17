@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "知乎批量拉黑",
-  "description": "根据关键词规则批量拉黑知乎用户，支持页面扫描、关注者/粉丝拉黑、点赞者拉黑",
+  "description": "根据关键词规则自动拉黑知乎用户，支持关注者/粉丝拉黑、回答点赞者拉黑",
   "version": "1.0.0",
   "background": {
     "service_worker": "background.js"

@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pageStatus = document.getElementById('pageStatus');
   const actionHint = document.getElementById('actionHint');
   const refreshPageBtn = document.getElementById('refreshPageBtn');
+  const headerSettingsBtn = document.getElementById('headerSettingsBtn');
   const sourceCheckboxes = Array.from(document.querySelectorAll('input[name="source"]'));
 
   const SOURCE_LABELS = { bio: '签名', comment: '评论', answer: '回答', article: '文章' };
@@ -288,6 +289,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const visible = settingsBody.style.display !== 'none';
     settingsBody.style.display = visible ? 'none' : 'block';
     settingsToggle.classList.toggle('open', !visible);
+  };
+
+  headerSettingsBtn.onclick = () => {
+    settingsBody.style.display = 'block';
+    settingsToggle.classList.add('open');
+    document.getElementById('dailyLimitInput').focus();
   };
 
   document.getElementById('saveSettingsBtn').onclick = async () => {

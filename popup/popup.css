@@ -58,6 +58,29 @@ body {
   letter-spacing: 0.04em;
 }
 
+.brand-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.header-settings {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  color: rgba(255,255,255,0.92);
+  background: rgba(255,255,255,0.13);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.16s ease;
+}
+
+.header-settings:hover {
+  background: rgba(255,255,255,0.2);
+  transform: translateY(-1px);
+}
+
 .header h1 {
   font-size: 18px;
   line-height: 1.2;
