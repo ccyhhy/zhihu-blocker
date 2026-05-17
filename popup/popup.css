@@ -211,13 +211,15 @@ body {
 /* ── 操作区 ────────────────────── */
 .voter-controls {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   align-items: center;
   gap: 10px;
   margin-top: 8px;
 }
 
-.voter-controls label {
+.voter-controls label,
+.voter-controls select,
+.answer-id-pill {
   min-height: 38px;
   padding: 8px 10px;
   font-size: 13px;
@@ -228,6 +230,18 @@ body {
   background: #f7f9fd;
   border: 1px solid var(--line);
   border-radius: 12px;
+}
+
+.voter-controls select {
+  width: 100%;
+  outline: none;
+}
+
+.answer-id-pill {
+  display: flex;
+  align-items: center;
+  color: var(--blue-dark);
+  font-weight: 800;
 }
 
 .voter-controls input[type="number"] {

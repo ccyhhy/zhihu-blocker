@@ -58,12 +58,16 @@ const ZBScanner = (() => {
       '[data-zop]',
       '[data-answer-id]',
       '[data-answerid]',
+      '[data-id]',
+      '[itemid*="/answer/"]',
       '[id^="answer-"]',
       '[data-za-extra-module]',
     ].join(', ')).forEach(el => {
       addAnswer(extractAnswerIdFromText(el.getAttribute('href')), el);
       addAnswer(el.getAttribute('data-answer-id'), el);
       addAnswer(el.getAttribute('data-answerid'), el);
+      addAnswer(extractAnswerIdFromText(el.getAttribute('data-id')), el);
+      addAnswer(extractAnswerIdFromText(el.getAttribute('itemid')), el);
       addAnswer(extractAnswerIdFromText(el.id), el);
       addAnswer(extractAnswerIdFromText(el.getAttribute('data-zop')), el);
       addAnswer(extractAnswerIdFromText(el.getAttribute('data-za-extra-module')), el);
@@ -83,6 +87,8 @@ const ZBScanner = (() => {
     const match = value.match(/\/answer\/(\d+)/)
       || value.match(/answer[_-]?id["'=:\s]+(\d+)/i)
       || value.match(/itemId["'=:\s]+(\d+)/i)
+      || value.match(/"type"\s*:\s*"answer"[\s\S]{0,120}?"id"\s*:\s*(\d+)/i)
+      || value.match(/"answer"[\s\S]{0,80}?"id"\s*:\s*(\d+)/i)
       || value.match(/answer-(\d+)/i);
     return match ? match[1] : null;
   }

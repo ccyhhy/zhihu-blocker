@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const PAGE_TYPE_LABELS = {
     feed: '知乎普通页面',
     answer: '回答页面',
+    question: '问题页面',
     article: '文章页面',
     followers: '粉丝页面',
     followees: '关注列表页面',
@@ -98,8 +99,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const resp = await sendToBackground({ action: 'getPageContext' });
       const type = resp.type;
+      const answers = Array.isArray(resp.answers) ? resp.answers : [];
       currentPageType = type;
-      currentAnswerId = resp.answerId || resp.answers?.[0]?.answerId || null;
+      currentAnswerId = resp.answerId || answers[0]?.answerId || null;
 
       specialActions.innerHTML = '';
       actionHint.textContent = '';
@@ -120,21 +122,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         hints.push(`${label}会通过接口分页获取，不再受当前页面已经滚动加载多少人的限制。`);
       }
 
-      if (type === 'answer' || type === 'question') {
+      if (currentAnswerId) {
         // 回答点赞者
         const wrap = document.createElement('div');
         wrap.className = 'voter-controls';
+        const answerPicker = answers.length > 1
+          ? `<select id="answerPicker" title="选择当前页面识别到的回答">${answers.map(answer => `<option value="${escapeHtml(answer.answerId)}">${escapeHtml(formatAnswerOption(answer))}</option>`).join('')}</select>`
+          : `<span class="answer-id-pill">回答 ${escapeHtml(currentAnswerId)}</span>`;
         wrap.innerHTML = `
-          <label>最多 <input type="number" id="voterMax" value="100" min="1" max="2000"> 人</label>
-          <button class="btn btn-danger" id="blockVotersBtn">拉黑回答点赞者</button>
+          <label class="voter-limit">最多 <input type="number" id="voterMax" value="100" min="1" max="2000"> 人</label>
+          ${answerPicker}
+          <button class="btn btn-danger" id="blockVotersBtn">拉黑该回答赞同者</button>
         `;
         specialActions.appendChild(wrap);
-        document.getElementById('blockVotersBtn').onclick = () => blockVoters();
-        if (currentAnswerId) {
-          hints.push(`将使用回答 ID ${currentAnswerId} 获取赞同者。问题页会默认选当前页面识别到的第一个回答，建议打开具体回答页更准确。`);
-        } else {
-          hints.push('未识别到回答 ID。请打开具体回答页，或先滚动到目标回答卡片后重新识别。');
+        const picker = document.getElementById('answerPicker');
+        if (picker) {
+          picker.value = currentAnswerId;
+          picker.onchange = () => { currentAnswerId = picker.value; };
         }
+        document.getElementById('blockVotersBtn').onclick = () => blockVoters();
+        hints.push(`已识别到 ${answers.length || 1} 个可见回答，可直接拉黑所选回答的赞同者。首页信息流建议先滚动到目标回答后点「重新识别」。`);
+      } else if (type === 'feed' || type === 'question') {
+        hints.push('当前可见区域还没识别到回答 ID。请先滚动到目标回答卡片，再点「重新识别」。');
       }
 
       // 评论喜爱者列表目前没有确认可用接口，仅显示诊断提示。
@@ -274,6 +283,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function formatAnswerOption(answer) {
+    const author = answer.author ? `${answer.author}：` : '';
+    const excerpt = answer.excerpt || `回答 ${answer.answerId}`;
+    return `${author}${excerpt}`.slice(0, 46);
   }
 
   sourceCheckboxes.forEach(cb => {
