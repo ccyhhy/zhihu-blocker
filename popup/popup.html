@@ -57,8 +57,8 @@
         <span class="stat-label">今日已拉黑</span>
       </div>
       <div class="stat-item">
-        <span class="stat-num" id="dailyLimit">100</span>
-        <span class="stat-label">每日上限</span>
+        <span class="stat-num" id="speedMode">极速</span>
+        <span class="stat-label">当前模式</span>
       </div>
       <div class="stat-item">
         <span class="stat-num" id="totalBlocked">0</span>
@@ -72,10 +72,6 @@
     <h2 class="section-toggle" id="settingsToggle">设置 <span class="arrow">&#9654;</span></h2>
     <div class="section-body" id="settingsBody" style="display:none">
       <div class="setting-row">
-        <label>每日拉黑上限</label>
-        <input type="number" id="dailyLimitInput" min="10" max="500" value="100">
-      </div>
-      <div class="setting-row">
         <label>拉黑间隔 (秒)</label>
         <div class="interval-inputs">
           <input type="number" id="intervalMin" min="0" max="30" step="0.1" value="0">
@@ -86,6 +82,10 @@
       <div class="setting-row">
         <label>翻页间隔 (秒)</label>
         <input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0">
+      </div>
+      <div class="setting-row">
+        <label>并发拉黑数</label>
+        <input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5">
       </div>
       <button id="saveSettingsBtn" class="btn btn-secondary btn-full">保存设置</button>
     </div>

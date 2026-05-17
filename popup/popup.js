@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const ruleList = document.getElementById('ruleList');
   const noRules = document.getElementById('noRules');
   const dailyCountEl = document.getElementById('dailyCount');
-  const dailyLimitEl = document.getElementById('dailyLimit');
+  const speedModeEl = document.getElementById('speedMode');
   const totalBlockedEl = document.getElementById('totalBlocked');
   const specialActions = document.getElementById('pageSpecialActions');
   const actionProgress = document.getElementById('actionProgress');
@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
   let isOperating = false;
   let currentPageType = null;
+  let lastProgressPercent = 0;
 
   async function saveRuleSourceDefaults() {
     const settings = await ZBStorage.getSettings();
@@ -78,13 +79,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderRules(rules);
     applyRuleSourceDefaults(settings);
     dailyCountEl.textContent = dailyCount;
-    dailyLimitEl.textContent = settings.dailyLimit;
+    speedModeEl.textContent = settings.blockIntervalMin === 0 && settings.blockIntervalMax === 0 ? '极速' : '限速';
     totalBlockedEl.textContent = Object.keys(blocked).length;
 
-    document.getElementById('dailyLimitInput').value = settings.dailyLimit;
     document.getElementById('intervalMin').value = settings.blockIntervalMin / 1000;
     document.getElementById('intervalMax').value = settings.blockIntervalMax / 1000;
     document.getElementById('pageIntervalInput').value = settings.pageInterval / 1000;
+    document.getElementById('blockConcurrencyInput').value = settings.blockConcurrency || 5;
 
     // 检测当前页面类型，显示对应操作
     await detectPageActions();
@@ -166,17 +167,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function blockFollowers() {
     if (isOperating) return;
     isOperating = true;
+    lastProgressPercent = 0;
 
     try {
       const label = currentPageType === 'followers' ? '粉丝' : '关注的人';
       const maxUsers = parseInt(document.getElementById('followMax')?.value) || 100;
-      showProgress(`正在获取${label}...`, '');
+      showProgress(`正在获取${label}...`, null);
       const resp = await sendToBackground({ action: 'blockFollowList', maxUsers });
       const r = resp.result;
-      showProgress(`完成！获取 ${resp.totalFetched || resp.count || 0} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '');
+      showProgress(`完成！获取 ${resp.totalFetched || resp.count || 0} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '100%');
       refresh();
     } catch (e) {
-      showProgress('出错：' + e.message, '');
+      showProgress('出错：' + e.message, '100%');
     }
 
     isOperating = false;
@@ -186,21 +188,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function blockVoters() {
     if (isOperating) return;
     isOperating = true;
+    lastProgressPercent = 0;
 
     const maxUsers = parseInt(document.getElementById('voterMax')?.value) || 100;
 
     try {
-      showProgress('正在获取点赞者...', '');
+      showProgress('正在获取点赞者...', null);
       const resp = await sendToBackground({ action: 'blockAnswerVoters', maxUsers });
       if (resp.error) {
-        showProgress('出错：' + resp.error, '');
+        showProgress('出错：' + resp.error, '100%');
       } else {
         const r = resp.result;
-        showProgress(`完成！获取 ${resp.totalFetched} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '');
+        showProgress(`完成！获取 ${resp.totalFetched} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '100%');
       }
       refresh();
     } catch (e) {
-      showProgress('出错：' + e.message, '');
+      showProgress('出错：' + e.message, '100%');
     }
 
     isOperating = false;
@@ -210,20 +213,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   function showProgress(text, pct) {
     actionProgress.style.display = 'flex';
     progressText.textContent = text;
-    if (pct === '') {
-      progressFill.style.width = '100%';
-    } else if (pct == null) {
-      progressFill.style.width = '0%';
-    } else {
-      progressFill.style.width = pct;
+    actionProgress.classList.toggle('is-pending', pct == null);
+
+    if (pct == null) {
+      progressFill.style.width = '8%';
+      return;
     }
+
+    const nextPercent = Math.max(lastProgressPercent, parseInt(pct, 10) || 0);
+    lastProgressPercent = Math.min(100, nextPercent);
+    progressFill.style.width = lastProgressPercent + '%';
   }
 
   // 监听 content script 发来的进度消息
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'blockProgress') {
       if (msg.reason === 'fetching') {
-        showProgress(msg.name, '');
+        showProgress(msg.name, null);
       } else {
         const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) + '%' : '';
         const status = msg.success ? '已拉黑' : (msg.reason === 'duplicate' ? '跳过' : '失败');
@@ -294,7 +300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   headerSettingsBtn.onclick = () => {
     settingsBody.style.display = 'block';
     settingsToggle.classList.add('open');
-    document.getElementById('dailyLimitInput').focus();
+    document.getElementById('intervalMin').focus();
   };
 
   document.getElementById('saveSettingsBtn').onclick = async () => {
@@ -302,12 +308,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const minDelay = parseFloat(document.getElementById('intervalMin').value);
     const maxDelay = parseFloat(document.getElementById('intervalMax').value);
     const pageDelay = parseFloat(document.getElementById('pageIntervalInput').value);
+    const blockConcurrency = parseInt(document.getElementById('blockConcurrencyInput').value);
 
-    settings.dailyLimit = Math.max(10, parseInt(document.getElementById('dailyLimitInput').value) || 100);
     settings.autoMode = true;
     settings.blockIntervalMin = Math.max(0, Number.isFinite(minDelay) ? minDelay * 1000 : 0);
     settings.blockIntervalMax = Math.max(settings.blockIntervalMin, Number.isFinite(maxDelay) ? maxDelay * 1000 : 0);
     settings.pageInterval = Math.max(0, Number.isFinite(pageDelay) ? pageDelay * 1000 : 0);
+    settings.blockConcurrency = Math.max(1, Math.min(20, Number.isFinite(blockConcurrency) ? blockConcurrency : 5));
     settings.fastNoDelayMigrated = true;
     await ZBStorage.saveSettings(settings);
     refresh();
