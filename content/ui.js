@@ -159,9 +159,9 @@
         sendResponse({ error: '正在拉黑中' });
         return;
       }
-      const answerId = ZBScanner.extractAnswerIdFromUrl();
+      const answerId = msg.answerId || ZBScanner.extractAnswerIdFromPage();
       if (!answerId) {
-        sendResponse({ error: '未找到回答 ID' });
+        sendResponse({ error: '未找到回答 ID，请打开具体回答页，或先在问题页滚动到目标回答卡片' });
         return;
       }
       isBlocking = true;
@@ -173,17 +173,18 @@
         });
         if (voters.length === 0) {
           isBlocking = false;
-          sendResponse({ error: '未获取到点赞者' });
+          sendResponse({ error: `未获取到点赞者（回答 ID：${answerId}）。可能是该回答没有公开赞同者，或知乎接口限制。` });
           return;
         }
         const result = await ZhihuAPI.batchBlock(voters, (current, total, user, success, reason) => {
           safeSendMessage({ type: 'blockProgress', current, total, name: user.name || user.urlToken, success, reason });
         });
         isBlocking = false;
-        sendResponse({ result, totalFetched: voters.length });
+        sendResponse({ result, totalFetched: voters.length, answerId });
       })().catch(e => {
         isBlocking = false;
-        sendResponse({ error: e.message });
+        const statusText = e.status ? `，接口状态：${e.status}` : '';
+        sendResponse({ error: `获取回答点赞者失败（回答 ID：${answerId}${statusText}）：${e.message}` });
       });
       return true;
     }
@@ -196,12 +197,14 @@
       sendResponse({
         type: ZBScanner.detectPageType(),
         profileToken: ZBScanner.extractProfileTokenFromUrl(),
+        answerId: ZBScanner.extractAnswerIdFromPage(),
+        answers: ZBScanner.extractAnswerIdsFromPage(),
         comments: serializeComments(ZBScanner.extractCommentIds()),
       });
     }
 
     if (msg.action === 'getAnswerId') {
-      sendResponse({ answerId: ZBScanner.extractAnswerIdFromUrl() });
+      sendResponse({ answerId: ZBScanner.extractAnswerIdFromPage() });
     }
 
     if (msg.action === 'getCommentIds') {

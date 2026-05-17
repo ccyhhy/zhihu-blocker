@@ -54,7 +54,7 @@ async function handlePopupCommand(message) {
     case 'blockFollowList':
       return sendToActiveZhihuTab({ action: 'blockFollowers', maxUsers: message.maxUsers });
     case 'blockAnswerVoters':
-      return sendToActiveZhihuTab({ action: 'blockVoters', maxUsers: message.maxUsers });
+      return sendToActiveZhihuTab({ action: 'blockVoters', maxUsers: message.maxUsers, answerId: message.answerId });
     default:
       throw new Error('未知操作');
   }

@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let isOperating = false;
   let currentPageType = null;
   let lastProgressPercent = 0;
+  let currentAnswerId = null;
 
   async function saveRuleSourceDefaults() {
     const settings = await ZBStorage.getSettings();
@@ -98,6 +99,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const resp = await sendToBackground({ action: 'getPageContext' });
       const type = resp.type;
       currentPageType = type;
+      currentAnswerId = resp.answerId || resp.answers?.[0]?.answerId || null;
 
       specialActions.innerHTML = '';
       actionHint.textContent = '';
@@ -118,7 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         hints.push(`${label}会通过接口分页获取，不再受当前页面已经滚动加载多少人的限制。`);
       }
 
-      if (type === 'answer') {
+      if (type === 'answer' || type === 'question') {
         // 回答点赞者
         const wrap = document.createElement('div');
         wrap.className = 'voter-controls';
@@ -128,11 +130,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
         specialActions.appendChild(wrap);
         document.getElementById('blockVotersBtn').onclick = () => blockVoters();
-        hints.push('回答点赞者会通过接口分页获取，不受当前页面可见人数限制。');
+        if (currentAnswerId) {
+          hints.push(`将使用回答 ID ${currentAnswerId} 获取赞同者。问题页会默认选当前页面识别到的第一个回答，建议打开具体回答页更准确。`);
+        } else {
+          hints.push('未识别到回答 ID。请打开具体回答页，或先滚动到目标回答卡片后重新识别。');
+        }
       }
 
       // 评论喜爱者列表目前没有确认可用接口，仅显示诊断提示。
-      if (type === 'answer' || type === 'feed' || type === 'article') {
+      if (type === 'answer' || type === 'question' || type === 'feed' || type === 'article') {
         const comments = resp.comments || [];
         if (comments.length > 0) {
           hints.push(`已识别到 ${comments.length} 条当前可见评论，但知乎没有确认开放评论喜爱者名单接口，暂不提供拉黑评论喜爱者。`);
@@ -142,7 +148,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       if (rules.length > 0) {
-        if (type === 'feed' || type === 'answer' || type === 'article' || type === 'profile') {
+        if (type === 'feed' || type === 'answer' || type === 'question' || type === 'article' || type === 'profile') {
           hints.unshift(`当前已启用 ${rules.length} 条关键词规则，会自动扫描当前已加载内容。`);
         }
       } else {
@@ -194,7 +200,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       showProgress('正在获取点赞者...', null);
-      const resp = await sendToBackground({ action: 'blockAnswerVoters', maxUsers });
+      const resp = await sendToBackground({ action: 'blockAnswerVoters', maxUsers, answerId: currentAnswerId });
       if (resp.error) {
         showProgress('出错：' + resp.error, '100%');
       } else {

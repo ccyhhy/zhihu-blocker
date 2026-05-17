@@ -9,6 +9,7 @@ const ZBScanner = (() => {
     if (/^\/people\/[^/]+\/followers/.test(path)) return 'followers';
     if (/^\/people\/[^/]+\/followees/.test(path)) return 'followees';
     if (/^\/question\/\d+\/answer\/\d+/.test(path)) return 'answer';
+    if (/^\/question\/\d+/.test(path)) return 'question';
     if (/^\/people\/[^/]+\/?$/.test(path)) return 'profile';
     if (/^\/\d+/.test(path) && location.hostname.includes('zhuanlan')) return 'article';
 
@@ -30,6 +31,60 @@ const ZBScanner = (() => {
   function extractAnswerIdFromUrl() {
     const m = location.pathname.match(/\/answer\/(\d+)/);
     return m ? m[1] : null;
+  }
+
+  function extractAnswerIdFromPage() {
+    return extractAnswerIdFromUrl() || extractAnswerIdsFromPage()[0]?.answerId || null;
+  }
+
+  function extractAnswerIdsFromPage() {
+    const answers = [];
+    const seen = new Set();
+
+    function addAnswer(answerId, sourceEl) {
+      if (!/^\d+$/.test(String(answerId || '')) || seen.has(answerId)) return;
+      seen.add(answerId);
+      const container = findAnswerContainer(sourceEl);
+      const author = cleanText(container?.querySelector?.('a[href*="/people/"]')?.textContent).slice(0, 24);
+      const excerpt = cleanText(container?.querySelector?.('.RichContent-inner, [class*="RichText"], [class*="ContentItem"]')?.textContent || container?.textContent).slice(0, 48);
+      answers.push({ answerId, author, excerpt });
+    }
+
+    const fromUrl = extractAnswerIdFromUrl();
+    if (fromUrl) addAnswer(fromUrl, document.body);
+
+    document.querySelectorAll([
+      'a[href*="/answer/"]',
+      '[data-zop]',
+      '[data-answer-id]',
+      '[data-answerid]',
+      '[id^="answer-"]',
+      '[data-za-extra-module]',
+    ].join(', ')).forEach(el => {
+      addAnswer(extractAnswerIdFromText(el.getAttribute('href')), el);
+      addAnswer(el.getAttribute('data-answer-id'), el);
+      addAnswer(el.getAttribute('data-answerid'), el);
+      addAnswer(extractAnswerIdFromText(el.id), el);
+      addAnswer(extractAnswerIdFromText(el.getAttribute('data-zop')), el);
+      addAnswer(extractAnswerIdFromText(el.getAttribute('data-za-extra-module')), el);
+    });
+
+    return answers;
+  }
+
+  function findAnswerContainer(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return document.body;
+    return el.closest('.AnswerItem, [class*="AnswerItem"], .ContentItem, [class*="ContentItem"]') || el;
+  }
+
+  function extractAnswerIdFromText(text) {
+    if (!text) return null;
+    const value = String(text);
+    const match = value.match(/\/answer\/(\d+)/)
+      || value.match(/answer[_-]?id["'=:\s]+(\d+)/i)
+      || value.match(/itemId["'=:\s]+(\d+)/i)
+      || value.match(/answer-(\d+)/i);
+    return match ? match[1] : null;
   }
 
   /**
@@ -284,6 +339,8 @@ const ZBScanner = (() => {
     detectPageType,
     extractUrlTokenFromUrl,
     extractAnswerIdFromUrl,
+    extractAnswerIdFromPage,
+    extractAnswerIdsFromPage,
     extractCommentIds,
     extractProfileTokenFromUrl,
     extractUsers,
