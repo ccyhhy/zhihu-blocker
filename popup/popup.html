@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="brand-mark">ZB</div>
+    <div>
+      <h1>知乎批量拉黑</h1>
+      <div class="auto-status">规则命中后自动处理，无需手动扫描</div>
+    </div>
+  </div>
+
+  <!-- 操作区：根据当前页面类型动态显示 -->
+  <div class="section" id="actionSection">
+    <h2>操作</h2>
+    <div class="action-meta">
+      <div id="pageStatus" class="page-status">正在识别当前页面...</div>
+      <button class="btn btn-secondary btn-mini" id="refreshPageBtn" type="button">重新识别</button>
+    </div>
+    <div id="actionContent">
+      <div id="pageSpecialActions"></div>
+      <div id="actionHint" class="action-hint"></div>
+    </div>
+    <div class="progress-wrap" id="actionProgress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <span class="progress-text" id="progressText"></span>
+    </div>
+  </div>
+
+  <!-- 关键词规则 -->
+  <div class="section">
+    <h2>关键词规则</h2>
+    <div class="add-rule">
+      <input type="text" id="keywordInput" placeholder="输入关键词...">
+      <div class="source-checks" aria-label="匹配来源">
+        <label><input type="checkbox" name="source" value="bio"> <span>签名</span></label>
+        <label><input type="checkbox" name="source" value="comment"> <span>评论</span></label>
+        <label><input type="checkbox" name="source" value="answer"> <span>回答</span></label>
+        <label><input type="checkbox" name="source" value="article"> <span>文章</span></label>
+      </div>
+      <button id="addRuleBtn" class="btn btn-primary">添加规则</button>
+    </div>
+    <div id="ruleList" class="rule-list"></div>
+    <div id="noRules" class="empty-hint">暂无规则，添加关键词开始使用</div>
+  </div>
+
+  <!-- 统计 -->
+  <div class="section">
+    <h2>今日统计</h2>
+    <div class="stats">
+      <div class="stat-item">
+        <span class="stat-num" id="dailyCount">0</span>
+        <span class="stat-label">今日已拉黑</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="dailyLimit">100</span>
+        <span class="stat-label">每日上限</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" id="totalBlocked">0</span>
+        <span class="stat-label">历史总计</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置 -->
+  <div class="section collapsible">
+    <h2 class="section-toggle" id="settingsToggle">设置 <span class="arrow">&#9654;</span></h2>
+    <div class="section-body" id="settingsBody" style="display:none">
+      <div class="setting-row">
+        <label>每日拉黑上限</label>
+        <input type="number" id="dailyLimitInput" min="10" max="500" value="100">
+      </div>
+      <div class="setting-row">
+        <label>拉黑间隔 (秒)</label>
+        <div class="interval-inputs">
+          <input type="number" id="intervalMin" min="0" max="30" step="0.1" value="0">
+          <span>~</span>
+          <input type="number" id="intervalMax" min="0" max="30" step="0.1" value="0">
+        </div>
+      </div>
+      <div class="setting-row">
+        <label>翻页间隔 (秒)</label>
+        <input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0">
+      </div>
+      <button id="saveSettingsBtn" class="btn btn-secondary btn-full">保存设置</button>
+    </div>
+  </div>
+
+  <script src="../lib/storage.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
