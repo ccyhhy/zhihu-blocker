@@ -2,7 +2,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const $ = id => document.getElementById(id);
   const sourceNames = { bio:'签名', comment:'评论', answer:'回答', article:'文章' };
   const pageNames = { feed:'知乎普通页面', answer:'回答页面', question:'问题页面', article:'文章页面', followers:'粉丝页面', followees:'关注列表页面', profile:'个人主页' };
-  let task = null, settings = {}, starting = false, retryTimer;
+  let task = null, review = null, settings = {}, starting = false, retryTimer, reviewPage = 0;
+  let selected = new Set(), selectionTail = Promise.resolve();
   function node(tag, value, style) {
     const element = document.createElement(tag); element.textContent = value;
     if (style) element.className = style; return element;
@@ -13,7 +14,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (error || response?.error) reject(new Error(error?.message || response.error)); else resolve(response || {});
     }));
   }
-  const error = e => { $('actionHint').classList.add('error'); $('actionHint').textContent = e.message || String(e); };
+  const error = e => {
+    const text = e.message || String(e); $('actionHint').classList.add('error'); $('actionHint').textContent = text;
+    if (review) { $('reviewHint').classList.add('error'); $('reviewHint').textContent = text; }
+  };
   function renderTask(value) {
     task = value;
     clearTimeout(retryTimer);
@@ -42,6 +46,54 @@ document.addEventListener('DOMContentLoaded', async () => {
       details.querySelector('summary').textContent = task.uncertainUsers?.length ? '查看命中及待核对用户' : '查看命中内容';
     }
     document.querySelectorAll('[data-start-task]').forEach(button => { button.disabled = !!(active || starting); });
+    updateReviewButtons();
+  }
+  const reviewNames = {rules:'当前页面规则匹配',voters:'所选回答赞同者',followers:'粉丝名单',followees:'关注名单'};
+  function updateReviewButtons() {
+    const busy = starting || task && ['running','paused'].includes(task.status);
+    $('confirmReviewBtn').disabled = !!busy || !selected.size;
+    $('confirmReviewBtn').textContent = selected.size ? '拉黑勾选的 ' + selected.size + ' 人' : '拉黑勾选的用户';
+    $('selectedCount').textContent = '已勾选 ' + selected.size + ' 人';
+    $('loadMoreReviewBtn').disabled = !!busy;
+    $('discardReviewBtn').disabled = !!starting;
+    $('selectPageBtn').disabled = !!starting || !(review?.users || []).slice(reviewPage * 20, (reviewPage + 1) * 20).some(user => !user.skip);
+    const visible = (review?.users || []).slice(reviewPage * 20, (reviewPage + 1) * 20).filter(user => !user.skip);
+    $('selectPageBtn').textContent = visible.length && visible.every(user => selected.has(user.urlToken)) ? '取消本页' : '选中本页';
+    document.querySelectorAll('#reviewList input').forEach(input => { input.disabled = !!starting || input.dataset.skip === 'true'; });
+  }
+  function saveSelection() {
+    const id = review.id, tokens = [...selected];
+    selectionTail = selectionTail.catch(() => {}).then(() => send({action:'saveReviewSelection',reviewId:id,tokens}));
+    selectionTail.catch(error); updateReviewButtons();
+  }
+  function renderReview(value, reset = true) {
+    if (value?.id !== review?.id) reviewPage = 0;
+    review = value; $('reviewSection').hidden = !review;
+    if (!review) { selected.clear(); updateReviewButtons(); return; }
+    if (reset) selected = new Set(review.selected || []);
+    const pages = Math.max(1, Math.ceil(review.users.length / 20)); reviewPage = Math.min(reviewPage,pages - 1);
+    $('reviewSummary').textContent = (reviewNames[review.type] || '候选名单') + ' · 账号：' + review.account + ' · 已收集 ' + review.users.length + ' 人。' +
+      (review.exhausted ? (review.type === 'rules' ? '只检查已加载内容。' : '名单读取完毕。') : review.users.length >= review.maxUsers ? '已达到本次上限。' : '还有未读取的名单。') + (review.limited ? '本次最多保留 200 人。' : '');
+    $('reviewHint').classList.toggle('error',!!review.error);
+    $('reviewHint').textContent = review.error || '默认不勾选；确认后只处理所选用户。预览和勾选会保存。';
+    $('reviewList').replaceChildren();
+    for (const user of review.users.slice(reviewPage * 20,(reviewPage + 1) * 20)) {
+      const row = node('div','','review-row'), checkbox = document.createElement('input'), copy = node('div','','review-copy');
+      checkbox.type = 'checkbox'; checkbox.checked = selected.has(user.urlToken); checkbox.dataset.skip = String(!!user.skip);
+      checkbox.setAttribute('aria-label','选择 ' + user.name);
+      checkbox.onchange = () => { if (checkbox.checked) selected.add(user.urlToken); else selected.delete(user.urlToken); saveSelection(); };
+      const link = node('a',user.name || user.urlToken); link.href = 'https://www.zhihu.com/people/' + encodeURIComponent(user.urlToken); link.target = '_blank'; link.rel = 'noopener noreferrer';
+      copy.appendChild(link); copy.appendChild(node('div',user.urlToken,'muted'));
+      if (user.skip) copy.appendChild(node('p','跳过：' + user.skip,'review-skip'));
+      for (const evidence of user.evidence || []) copy.appendChild(node('p',(sourceNames[evidence.source] || evidence.source) + ' · 命中「' + evidence.keyword + '」：' + evidence.text));
+      if (!user.evidence?.length) copy.appendChild(node('p','来自' + (reviewNames[review.type] || '候选名单') + '，未按关键词筛选。'));
+      row.append(checkbox,copy); $('reviewList').appendChild(row);
+    }
+    if (!review.users.length) $('reviewList').appendChild(node('p','暂时没有候选用户。','muted'));
+    $('reviewPage').textContent = (reviewPage + 1) + ' / ' + pages;
+    $('reviewPrevBtn').disabled = reviewPage === 0; $('reviewNextBtn').disabled = reviewPage + 1 >= pages;
+    $('loadMoreReviewBtn').hidden = review.exhausted || review.users.length >= review.maxUsers;
+    updateReviewButtons();
   }
   function renderStats(stats) {
     $('dailyCount').textContent = stats?.daily ?? '—'; $('totalBlocked').textContent = stats?.total ?? '—';
@@ -59,7 +111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       remove.onclick = () => ZBStorage.removeRule(rule.id).then(() => refreshRules()).catch(error);
       row.append(copy,remove); $('ruleList').appendChild(row);
     }
-    $('speedMode').textContent = !settings.autoMode ? '自动匹配关闭' : '自动匹配开启';
+    $('speedMode').textContent = !settings.autoMode ? '先预览再拉黑' : '自动拉黑开启';
     if (apply) {
       document.querySelectorAll('input[name="source"]').forEach(cb => { cb.checked = settings.ruleSourceDefaults.includes(cb.value); });
       $('autoModeInput').checked = settings.autoMode;
@@ -71,17 +123,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function start(action,input,answerId) {
     if (starting || task && ['running','paused'].includes(task.status)) return;
     starting = true; renderTask(task);
-    $('actionHint').classList.remove('error'); $('actionHint').textContent = '正在确认登录账号…';
+    $('actionHint').classList.remove('error'); $('actionHint').textContent = '正在读取候选，仅预览…';
     try {
-      const response = await send({action,answerId,maxUsers:Math.max(1,Math.min(2000,Number(input.value) || 100))});
-      if (response.busy) error('已有任务，请继续或结束该任务'); renderTask(response.task);
-      if (!response.busy) $('actionHint').textContent = '任务进度会自动保存，可暂停后继续。';
+      const response = await send({action,answerId,maxUsers:Math.max(1,Math.min(200,Number(input.value) || 100))});
+      renderReview(response.review);
+      $('actionHint').textContent = '请在预览中勾选要处理的用户。';
+      $('reviewSection').scrollIntoView({block:'start'});
     } catch (e) { error(e); } finally { starting = false; renderTask(task); }
   }
   function control(label,caption,action,answers) {
     const wrap = node('div','','voter-controls'), limit = node('label','最多检查 '), input = document.createElement('input');
-    input.type = 'number'; input.min = '1'; input.max = '2000'; input.value = '100';
-    limit.append(input,document.createTextNode(' 人（含跳过）')); wrap.appendChild(limit);
+    input.setAttribute('aria-label','本次最多预览人数');
+    input.type = 'number'; input.min = '1'; input.max = '200'; input.value = '100';
+    limit.append(input,document.createTextNode(' 人（最多 200）')); wrap.appendChild(limit);
     let picker;
     if (answers) {
       picker = document.createElement('select'); picker.setAttribute('aria-label','选择回答');
@@ -91,7 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       wrap.appendChild(picker);
     }
-    const button = node('button',caption,'btn btn-danger'); button.dataset.startTask = label;
+    const button = node('button',caption,'btn btn-secondary'); button.dataset.startTask = label;
     button.onclick = () => start(action,input,picker?.value);
     wrap.appendChild(button); $('pageSpecialActions').appendChild(wrap);
   }
@@ -100,10 +154,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const context = await send({action:'getPageContext'});
       $('pageStatus').textContent = '当前页面：' + (pageNames[context.type] || '知乎页面');
       $('pageSpecialActions').replaceChildren();
-      if (['followers','followees'].includes(context.type) && !context.listUnavailable) control(context.type,context.type === 'followers' ? '拉黑粉丝名单' : '拉黑关注名单','blockFollowList');
-      if (context.answers?.length) control('voters','拉黑所选回答赞同者','blockAnswerVoters',context.answers);
+      if (['followers','followees'].includes(context.type) && !context.listUnavailable) control(context.type,context.type === 'followers' ? '预览粉丝名单' : '预览关注名单','previewFollowList');
+      if (context.answers?.length) control('voters','预览所选回答赞同者','previewAnswerVoters',context.answers);
       $('actionHint').classList.remove('error');
-      $('actionHint').textContent = context.listUnavailable || '规则匹配已加载的本人内容。名单会整批处理，跳过白名单和本插件已记录的用户。';
+      $('actionHint').textContent = context.listUnavailable || (settings.autoMode ? '自动拉黑开启，会跳过预览；如需手动选择，请先在设置中关闭。' : '只读取候选，勾选后才会拉黑。名单关联不等于关键词命中。');
+      const preview = node('button','预览当前页面规则匹配','btn btn-secondary btn-full'); preview.dataset.startTask = 'rules';
+      preview.style.marginTop = '10px'; preview.onclick = () => start('previewRules',{value:200}); $('pageSpecialActions').appendChild(preview);
       renderTask(task);
     } catch (e) { $('pageStatus').textContent = '页面暂不可用'; $('pageSpecialActions').replaceChildren(); error(e); }
   }
@@ -135,15 +191,37 @@ document.addEventListener('DOMContentLoaded', async () => {
       saved.pageInterval = bounded('pageIntervalInput',10) * 1000;
       saved.blockConcurrency = Math.max(1,Math.floor(bounded('blockConcurrencyInput',20)) || 5);
       saved.whitelist = whitelist; saved.ruleSourceDefaults = [...document.querySelectorAll('input[name="source"]:checked')].map(cb => cb.value);
-      await ZBStorage.saveSettings(saved); await refreshRules();
+      await ZBStorage.saveSettings(saved); await refreshRules(); await detectPage();
       $('saveSettingsBtn').textContent = '已保存'; setTimeout(() => { $('saveSettingsBtn').textContent = '保存设置'; },1500);
     } catch (e) { error(e); }
   };
+  $('selectPageBtn').onclick = () => {
+    const visible = review.users.slice(reviewPage * 20,(reviewPage + 1) * 20).filter(user => !user.skip);
+    const clear = visible.every(user => selected.has(user.urlToken));
+    for (const user of visible) if (clear) selected.delete(user.urlToken); else selected.add(user.urlToken);
+    renderReview(review,false); saveSelection();
+  };
+  $('reviewPrevBtn').onclick = () => { reviewPage--; renderReview(review,false); };
+  $('reviewNextBtn').onclick = () => { reviewPage++; renderReview(review,false); };
+  async function reviewAction(action) {
+    if (starting || !review) return;
+    starting = true; updateReviewButtons(); renderTask(task);
+    try {
+      await selectionTail;
+      const response = await send({action,reviewId:review.id,tokens:[...selected]});
+      if (response.busy) throw new Error('已有任务，请继续或结束该任务');
+      renderReview(response.review);
+      if (response.task) { renderTask(response.task); $('actionHint').textContent = '仅处理本次勾选用户，进度会自动保存。'; }
+    } catch (e) { error(e); } finally { starting = false; updateReviewButtons(); renderTask(task); }
+  }
+  $('loadMoreReviewBtn').onclick = () => reviewAction('loadMoreReview');
+  $('discardReviewBtn').onclick = () => reviewAction('discardReview');
+  $('confirmReviewBtn').onclick = () => reviewAction('confirmReview');
   $('taskToggleBtn').onclick = async () => { try { renderTask((await send({action:task.status === 'running' ? 'pauseTask' : 'resumeTask'})).task); } catch (e) { error(e); } };
   $('taskEndBtn').onclick = async () => { try { renderTask((await send({action:'endTask'})).task); } catch (e) { error(e); } };
   $('refreshPageBtn').onclick = detectPage;
   chrome.runtime.onMessage.addListener(message => { if (message.type === 'taskUpdate') { renderTask(message.task); renderStats(message.stats); } });
   chrome.storage.onChanged.addListener((changes,area) => { if (area === 'sync' && (changes.rules || changes.settings)) refreshRules().catch(error); });
   await refreshRules(true); await detectPage();
-  try { const state = await send({action:'getState'}); renderTask(state.task); renderStats(state.stats); if (state.error) error(state.error); } catch (e) { error(e); }
+  try { const state = await send({action:'getState'}); renderTask(state.task); renderStats(state.stats); renderReview(state.review); if (state.error) error(state.error); } catch (e) { error(e); }
 });

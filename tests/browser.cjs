@@ -1,7 +1,8 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {source,root}=require('./helpers.cjs');
+const {source,root,harness,json,until}=require('./helpers.cjs');
+const vm=require('node:vm');
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const results=[];
 async function check(name,fn){const evidence=await fn();results.push({name,passed:true,evidence});console.log('PASS '+name);}
@@ -162,8 +163,74 @@ try {
     if(screenshot) { await page.evaluate(()=>{document.getElementById('settingsToggle').click();document.querySelector('.exclude-options').open=false;document.getElementById('taskEvidence').textContent='Alice · 回答：示例命中内容';window.scrollTo(0,0);});await page.screenshot({path:screenshot,fullPage:true}); }
     await page.evaluate(()=>{popupState.context={type:'followees',answers:[],listUnavailable:'对方已设置关注名单不可见，无法处理此名单。'};});
     await page.locator('#refreshPageBtn').click();await page.waitForFunction(()=>document.getElementById('actionHint').textContent.includes('不可见'));
-    assert.equal(await page.locator('[data-start-task]').count(),0);
+    assert.equal(await page.locator('[data-start-task=followees]').count(),0);
+    assert.equal(await page.locator('[data-start-task=rules]').count(),1);
     return layout;
+  });
+  await check('manual rule preview works with auto off, preserves direct authors and sends no automatic tasks',async()=>{
+    await fixture(card('alice','营销号')+card('white','营销号')+modernComment(101,'bob','营销号','target'));
+    await page.evaluate(()=>{
+      window.manual={listener:null,calls:[]};
+      window.chrome={runtime:{id:'test',lastError:null,onMessage:{addListener(fn){manual.listener=fn;}},sendMessage:(m,cb)=>{manual.calls.push(m);cb({});}},
+        storage:{onChanged:{addListener(){},removeListener(){}},sync:{get:(defaults,cb)=>cb({...defaults,rules:[{id:'r',keyword:'营销号',sources:['answer','comment'],exclude:[]}],settings:{autoMode:false,whitelist:['white']}})}}};
+    });
+    await page.addScriptTag({content:source('lib/storage.js')});await page.addScriptTag({content:source('content/ui.js')});
+    const preview=await page.evaluate(()=>new Promise(resolve=>manual.listener({action:'getPageMatches'},{},resolve)));
+    assert.deepEqual(preview.users.map(u=>u.urlToken),['alice','bob']);assert.equal(preview.users[1].evidence[0].source,'comment');
+    await page.evaluate(()=>document.querySelector('.RichContent-inner').textContent='新内容');await page.waitForTimeout(600);
+    assert.equal(await page.evaluate(()=>manual.calls.length),0);
+    return {matchedUsers:preview.users.length,automaticRequests:0};
+  });
+  await check('popup reviews candidates without POST, restores selections and executes only checked users',async()=>{
+    const posts=[],gets=[];
+    const backend=harness(async(url,options)=>{
+      if(options?.method==='POST'){posts.push(url);return json({});}
+      gets.push(url);if(url.endsWith('/me'))return json({url_token:'owner'});
+      return json({data:[{url_token:'voter',name:'Voter'}],paging:{is_end:true}});
+    },{'zb:block:owner:u0':1});backend.data.sync.settings.autoMode=false;
+    backend.data.sync.rules=[{id:'r',keyword:'营销号',sources:['answer']}];
+    const signature=JSON.stringify(await backend.store.getRules());
+    const candidates=Array.from({length:42},(_,i)=>({urlToken:'u'+i,name:i===1?'<img src=x onerror=alert(1)>':'User '+i,evidence:[{keyword:'营销号',source:'answer',text:'示例命中片段 '+i}]}));
+    backend.context.importScripts=()=>{};
+    backend.context.chrome.storage.onChanged={addListener(){}};
+    backend.context.chrome.tabs={query:(query,cb)=>cb([{id:1,url:'https://www.zhihu.com/question/1/answer/42'}]),sendMessage:(id,m,cb)=>cb(m.action==='getPageMatches'?{users:candidates,rulesSignature:signature}:{type:'answer',answers:[{answerId:'42',author:'Alice'}]})};
+    vm.runInContext(source('background.js'),backend.context);const handle=vm.runInContext('handle',backend.context);
+    const actions=[];await page.exposeFunction('reviewBackground',async m=>{actions.push(m);try{return await handle(m,{id:'test-extension'});}catch(e){return {error:e.message};}});
+    async function popup(){
+      await page.goto('https://www.zhihu.com/');
+      await page.setContent(source('popup/popup.html').replace(/<script[\s\S]*?<\/script>/g,'').replace('<link rel="stylesheet" href="popup.css">','<style>'+source('popup/popup.css')+'</style>'));
+      await page.evaluate(()=>{
+        window.chrome={runtime:{id:'test-extension',lastError:null,onMessage:{addListener(){}},sendMessage:(m,cb)=>reviewBackground(m).then(cb)},
+          storage:{onChanged:{addListener(){}},sync:{get:(d,cb)=>cb({...d,rules:[{id:'r',keyword:'营销号',sources:['answer']}],settings:{autoMode:false,whitelist:[],ruleSourceDefaults:['answer'],blockConcurrency:5}}),set:(v,cb)=>cb()}}};
+      });
+      await page.addScriptTag({content:source('lib/storage.js')});await page.addScriptTag({content:source('popup/popup.js')});
+      await page.evaluate(()=>document.dispatchEvent(new Event('DOMContentLoaded')));
+      await page.waitForFunction(()=>document.getElementById('pageStatus').textContent.includes('回答页面'));
+    }
+    await popup();await page.locator('[data-start-task=rules]').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.review-row').length===20);
+    assert.equal(posts.length,0);assert.ok(await page.locator('#confirmReviewBtn').isDisabled());assert.ok(await page.locator('#reviewList input').first().isDisabled());
+    assert.equal(await page.locator('#reviewList img').count(),0);assert.ok((await page.locator('#reviewList').textContent()).includes('<img src=x'));
+    await page.locator('#reviewList input').nth(1).check();await page.locator('#reviewNextBtn').click();
+    await page.locator('#reviewList input').first().check();
+    await until(()=>backend.data.local.zbReview.selected.length===2);assert.equal(posts.length,0);
+    await popup();await page.waitForFunction(()=>document.getElementById('selectedCount').textContent==='已勾选 2 人');
+    assert.ok(await page.locator('#reviewList input').nth(1).isChecked());
+    await page.locator('#reviewNextBtn').click();assert.ok(await page.locator('#reviewList input').first().isChecked());
+    await page.locator('#selectPageBtn').click();await page.locator('#selectPageBtn').click();
+    // Cancel this page while keeping the selection on page one.
+    await page.waitForFunction(()=>document.getElementById('selectedCount').textContent==='已勾选 1 人');
+    const screenshot=process.env.REVIEW_SCREENSHOT;
+    if(screenshot){await page.locator('#reviewPrevBtn').click();await page.evaluate(()=>{document.querySelectorAll('#reviewList a').forEach((link,i)=>{link.textContent='示例用户 '+i;});});await page.screenshot({path:screenshot,fullPage:true});}
+    const layout=await page.evaluate(()=>({bodyWidth:document.body.getBoundingClientRect().width,scrollWidth:document.body.scrollWidth}));assert.ok(layout.scrollWidth<=layout.bodyWidth+1);
+    await page.locator('#confirmReviewBtn').click();await until(()=>backend.data.local.zbTask?.status==='done');
+    assert.equal(posts.length,1);assert.ok(posts[0].includes('/members/u1/'));assert.equal(backend.data.local.zbReview,null);
+    await popup();await page.locator('[data-start-task=voters]').click();
+    await page.waitForFunction(()=>document.getElementById('reviewSummary').textContent.includes('已收集 1 人'));
+    assert.equal(posts.length,1);assert.ok(gets.some(url=>url.includes('/answers/42/upvoters')));
+    assert.ok((await page.locator('#reviewList').textContent()).includes('未按关键词筛选'));
+    await page.locator('#discardReviewBtn').click();await page.waitForFunction(()=>document.getElementById('reviewSection').hidden);
+    assert.equal(posts.length,1);return {selectedPostRequests:posts.length,renderedRows:20,restoredSelections:2,...layout};
   });
   await context.close();
 } finally {await browser.close();}

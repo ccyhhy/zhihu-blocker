@@ -111,7 +111,26 @@
     }
   }
   chrome.storage.onChanged.addListener(onChanged);
+  async function pageMatches() {
+    const [currentRules, currentSettings] = await Promise.all([ZBStorage.getRules(), ZBStorage.getSettings()]);
+    const units = [...ZBScanner.collectUnits()], users = new Map();
+    for (let offset = 0; offset < units.length; offset += 30) {
+      const matches = ZBScanner.matchUsers(ZBScanner.extractUsers(units.slice(offset, offset + 30)), currentRules, currentSettings.whitelist);
+      for (const user of matches) {
+        const prior = users.get(user.urlToken);
+        const evidence = user.matchedRules.map(m => ({ keyword: m.rule.keyword, source: m.source, text: m.evidence }));
+        if (prior) prior.evidence = prior.evidence.concat(evidence).slice(0, 3);
+        else if (users.size < 200) users.set(user.urlToken, { urlToken: user.urlToken, name: user.name, evidence });
+      }
+      if (offset + 30 < units.length) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    return { users: [...users.values()], rulesSignature: JSON.stringify(currentRules), limited: users.size >= 200 };
+  }
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
+    if (message.action === 'getPageMatches') {
+      pageMatches().then(respond).catch(error => respond({error: error.message}));
+      return true;
+    }
     if (message.action === 'getPageContext') {
       const answers = ZBScanner.extractAnswerIdsFromPage();
       respond({ type: ZBScanner.detectPageType(), profileToken: ZBScanner.extractProfileTokenFromUrl(), listUnavailable: ZBScanner.listUnavailable(),

@@ -74,3 +74,14 @@ p.muted { margin: 5px 0 9px; }
 .field-label { display: block; margin: 12px 0 7px; }
 textarea { resize: vertical; margin-bottom: 9px; line-height: 1.5; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+.review-summary { margin: 0 0 9px; font-size: 12px; line-height: 1.6; color: #536178; overflow-wrap: anywhere; }
+.review-toolbar,.review-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 9px 0; }
+.review-list { max-height: 290px; overflow-y: auto; }
+.review-row { display: flex; align-items: flex-start; gap: 9px; padding: 10px 0; border-bottom: 1px solid #edf0f5; }
+.review-row>input { flex-shrink: 0; margin-top: 3px; }
+.review-copy { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.review-copy a { color: #1964c5; text-decoration: none; font-weight: 550; }
+.review-copy p { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: #536178; white-space: pre-wrap; }
+.review-skip { color: #8a95a6 !important; }
+#confirmReviewBtn { margin-top: 10px; }

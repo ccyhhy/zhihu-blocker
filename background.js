@@ -1,5 +1,5 @@
 /** 页面只提供已识别目标；固定接口与统一任务在后台执行。 */
-importScripts('lib/storage.js', 'lib/api.js', 'lib/tasks.js');
+importScripts('lib/storage.js', 'lib/api.js', 'lib/tasks.js', 'lib/review.js');
 const isZhihu = value => {
   try { const u = new URL(value); return u.protocol === 'https:' && /(^|\.)zhihu\.com$/.test(u.hostname); } catch { return false; }
 };
@@ -17,7 +17,11 @@ function pageContext(tab) {
   }));
 }
 async function handle(message, sender) {
-  if (message.action === 'getState') return ZBTasks.getState();
+  if (message.action === 'getState') return { ...await ZBTasks.getState(), review: await ZBReview.get() };
+  if (message.action === 'loadMoreReview') return ZBReview.more(message.reviewId);
+  if (message.action === 'saveReviewSelection') return ZBReview.select(message.reviewId, message.tokens);
+  if (message.action === 'confirmReview') return ZBReview.confirm(message.reviewId, message.tokens);
+  if (message.action === 'discardReview') return ZBReview.discard(message.reviewId);
   if (message.action === 'pauseTask') return ZBTasks.pause();
   if (message.action === 'endTask') return ZBTasks.end();
   if (message.action === 'resumeTask') return ZBTasks.resume();
@@ -28,15 +32,22 @@ async function handle(message, sender) {
   }
   const tab = await activeTab(), context = await pageContext(tab);
   if (message.action === 'getPageContext') return { ...context, tabId: tab.id };
-  if (message.action === 'blockFollowList') {
+  if (message.action === 'previewRules') {
+    const users = await new Promise((resolve, reject) => chrome.tabs.sendMessage(tab.id, { action: 'getPageMatches' }, response => {
+      const error = chrome.runtime.lastError;
+      if (error || !response || response.error) reject(new Error(error?.message || response?.error || '页面已更新，请刷新后重试')); else resolve(response);
+    }));
+    return ZBReview.create({ type: 'rules', tabId: tab.id, ...users });
+  }
+  if (['previewFollowList', 'blockFollowList'].includes(message.action)) {
     if (!['followers', 'followees'].includes(context.type) || !context.profileToken) throw new Error('请先打开粉丝或关注列表页面');
     if (context.listUnavailable) throw new Error(context.listUnavailable);
-    return ZBTasks.start({ type: context.type, target: context.profileToken, tabId: tab.id, maxUsers: message.maxUsers });
+    return ZBReview.create({ type: context.type, target: context.profileToken, tabId: tab.id, maxUsers: message.maxUsers });
   }
-  if (message.action === 'blockAnswerVoters') {
+  if (['previewAnswerVoters', 'blockAnswerVoters'].includes(message.action)) {
     const answerId = String(message.answerId || '');
     if (!(context.answers || []).some(a => a.answerId === answerId)) throw new Error('所选回答已不在当前页面，请重新识别');
-    return ZBTasks.start({ type: 'voters', target: answerId, tabId: tab.id, maxUsers: message.maxUsers });
+    return ZBReview.create({ type: 'voters', target: answerId, tabId: tab.id, maxUsers: message.maxUsers });
   }
   throw new Error('未知操作');
 }

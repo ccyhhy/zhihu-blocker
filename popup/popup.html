@@ -8,8 +8,8 @@
 </head>
 <body>
   <header class="header">
-    <div><h1>知乎批量拉黑</h1><p>按规则筛选，按名单处理</p></div>
-    <div class="header-actions"><span id="speedMode" class="badge">自动匹配</span><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
+    <div><h1>知乎批量拉黑</h1><p>先预览，再选择拉黑</p></div>
+    <div class="header-actions"><span id="speedMode" class="badge">先预览再拉黑</span><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
   </header>
   <main>
     <section class="section" id="actionSection">
@@ -27,6 +27,16 @@
       </div>
       <details class="task-evidence" hidden><summary>查看命中内容</summary><div id="taskEvidence"></div></details>
     </section>
+    <section class="section" id="reviewSection" hidden>
+      <div class="section-heading"><h2>拉黑前预览</h2><button id="discardReviewBtn" class="btn btn-quiet" type="button">关闭预览</button></div>
+      <p id="reviewSummary" class="review-summary" role="status" aria-live="polite"></p>
+      <div class="review-toolbar"><button id="selectPageBtn" class="btn btn-secondary" type="button">选中本页</button><span id="selectedCount" class="muted"></span></div>
+      <div id="reviewList" class="review-list"></div>
+      <div class="review-pagination"><button id="reviewPrevBtn" class="btn btn-quiet" type="button">上一页</button><span id="reviewPage" class="muted"></span><button id="reviewNextBtn" class="btn btn-quiet" type="button">下一页</button></div>
+      <button id="loadMoreReviewBtn" class="btn btn-secondary btn-full" type="button" hidden>读取下一批候选</button>
+      <p id="reviewHint" class="action-hint" role="status" aria-live="polite"></p>
+      <button id="confirmReviewBtn" class="btn btn-danger btn-full" type="button" disabled>拉黑勾选的用户</button>
+    </section>
     <section class="section">
       <div class="section-heading"><h2>关键词规则</h2><span class="muted" id="ruleCount"></span></div>
       <div class="add-rule">
@@ -42,7 +52,7 @@
         <button id="addRuleBtn" class="btn btn-primary btn-full" type="button">添加规则</button>
       </div>
       <div id="ruleList" class="rule-list"></div>
-      <div id="noRules" class="empty-hint">暂无规则。添加后会匹配已加载的内容。</div>
+      <div id="noRules" class="empty-hint">暂无规则。添加后可预览已加载的内容。</div>
     </section>
     <section class="section stats-section">
       <div class="stats">
@@ -54,7 +64,7 @@
     <section class="section settings-section">
       <button class="section-toggle" id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsBody">设置 <span class="arrow" aria-hidden="true">›</span></button>
       <div class="section-body" id="settingsBody" style="display:none">
-        <div class="setting-row"><label for="autoModeInput">自动匹配拉黑</label><input type="checkbox" id="autoModeInput" checked></div>
+        <div class="setting-row"><label for="autoModeInput">自动拉黑（跳过预览）</label><input type="checkbox" id="autoModeInput"></div>
         <div class="setting-row"><span id="intervalLabel">拉黑间隔（秒）</span><div class="interval-inputs"><input type="number" id="intervalMin" aria-label="最小拉黑间隔" min="0" max="30" step="0.1" value="0"><span>至</span><input type="number" id="intervalMax" aria-label="最大拉黑间隔" min="0" max="30" step="0.1" value="0"></div></div>
         <div class="setting-row"><label for="pageIntervalInput">翻页间隔（秒）</label><input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0"></div>
         <div class="setting-row"><label for="blockConcurrencyInput">并发拉黑数</label><input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5"></div>

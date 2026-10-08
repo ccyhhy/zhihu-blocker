@@ -7,8 +7,8 @@ const accountReply = url => url.endsWith('/me') ? json({url_token:'owner'}) : nu
 const done = h => until(()=>h.data.local.zbTask?.status === 'done');
 test('manifest references, imported scripts and JavaScript syntax',()=>{
   const manifest=JSON.parse(source('manifest.json'));
-  assert.equal(manifest.version,'1.1.0');
-  for (const file of ['background.js','lib/tasks.js','popup/popup.js',...manifest.content_scripts.flatMap(x=>x.js),'lib/api.js']) new vm.Script(source(file),{filename:file});
+  assert.equal(manifest.version,'1.2.0');
+  for (const file of ['background.js','lib/tasks.js','popup/popup.js',...manifest.content_scripts.flatMap(x=>x.js),'lib/api.js','lib/review.js']) new vm.Script(source(file),{filename:file});
   for (const file of [manifest.action.default_popup,...Object.values(manifest.icons)]) assert.ok(source(file).length);
   assert.ok(!manifest.content_scripts[0].js.includes('lib/api.js'));
 });
@@ -220,4 +220,87 @@ test('failed local success write pauses without inflated success count or automa
   assert.equal(Object.keys(h.data.local).filter(k=>k.startsWith('zb:block:')).length,0);
   await h.tasks.resume();await done(h);
   assert.equal(posts,1);assert.equal(h.data.local.zbTask.unknown,1);
+});
+
+test('new installs default to review while saved automatic settings remain intact',async()=>{
+  const h=harness(async url=>accountReply(url)||json({}));
+  assert.equal((await h.store.getSettings()).autoMode,true);
+  delete h.data.sync.settings.autoMode;
+  assert.equal((await h.store.getSettings()).autoMode,false);
+  assert.equal((await h.tasks.start({type:'auto',users:users(1)})).disabled,true);
+});
+test('rule preview persists without POST, filters protected users, and confirms only selected users',async()=>{
+  const posts=[];
+  const h=harness(async(url,options)=>{if(url.endsWith('/me'))return accountReply(url);posts.push(url);return json({});},
+    {'zb:block:owner:user0':1,'zb:unknown:owner:user1':1});
+  h.data.sync.settings.autoMode=false;h.data.sync.settings.whitelist=['user2'];
+  const result=await h.review.create({type:'rules',rulesSignature:'[]',users:[{urlToken:'owner'},...users(5),{urlToken:'user4'},{urlToken:'bad/value'}]});
+  assert.equal(posts.length,0);assert.equal(result.review.users.length,6);assert.equal(result.review.selected.length,0);
+  assert.deepEqual(copy(result.review.users.map(u=>u.skip)),['当前账号','已记录拉黑','结果待核对','白名单','','']);
+  await assert.rejects(()=>h.review.confirm(result.review.id,['outsider']),/不在本次预览/);
+  await h.review.select(result.review.id,['user3','user0','user2']);
+  const restarted=harness(async(url,options)=>{if(url.endsWith('/me'))return accountReply(url);posts.push(url);return json({});},copy(h.data.local));
+  restarted.data.sync.settings.autoMode=false;restarted.data.sync.settings.whitelist=['user2'];
+  assert.deepEqual(copy((await restarted.review.get()).selected),['user3','user0','user2']);
+  await restarted.review.confirm(result.review.id,['user3','user0','user2']);await done(restarted);
+  assert.equal(posts.length,1);assert.ok(posts[0].includes('/members/user3/'));
+  assert.equal(await restarted.review.get(),null);
+  await assert.rejects(()=>restarted.review.confirm(result.review.id,['user4']),/预览已变更/);
+});
+test('preview pages load only on request, cap at 200, and selected tasks keep more than 20 users',async()=>{
+  let pages=0,posts=0;
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);
+    if(options?.method==='POST'){posts++;return json({});}
+    pages++;const offset=Number(new URL(url).searchParams.get('offset'));
+    return json({data:users(220).slice(offset,offset+20).map(u=>({url_token:u.urlToken})),paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(offset+20)}});
+  });h.data.sync.settings.autoMode=false;
+  let {review}=await h.review.create({type:'voters',target:'42',maxUsers:2000});
+  assert.equal(pages,1);assert.equal(posts,0);assert.equal(review.users.length,20);assert.equal(review.maxUsers,200);
+  const id=review.id;({review}=await h.review.more(id));assert.equal(review.users.length,40);
+  await h.review.select(id,['user0']);({review}=await h.review.more(id));assert.deepEqual(copy(review.selected),['user0']);
+  for(let i=3;i<10;i++)({review}=await h.review.more(id));
+  assert.equal(review.users.length,200);assert.equal(pages,10);
+  await h.review.more(id);assert.equal(pages,10);assert.equal(posts,0);
+  await h.review.confirm(id,review.users.slice(0,25).map(u=>u.urlToken));await done(h);
+  assert.equal(posts,25);assert.equal(h.data.local.zbTask.fetched,25);
+});
+test('changed accounts, changed rules and automatic mode invalidate confirmations without POST',async()=>{
+  let account='owner',posts=0;
+  const h=harness(async(url,options)=>url.endsWith('/me')?json({url_token:account}):(++posts,json({})));
+  h.data.sync.settings.autoMode=false;
+  const {review}=await h.review.create({type:'rules',rulesSignature:'[]',users:users(2)});
+  account='other';await assert.rejects(()=>h.review.confirm(review.id,['user0']),/账号已切换/);
+  account='owner';h.data.sync.rules=[{id:'new',keyword:'x',sources:['answer']}];
+  await assert.rejects(()=>h.review.confirm(review.id,['user0']),/规则已变更/);
+  h.data.sync.rules=[];h.data.sync.settings.autoMode=true;
+  await assert.rejects(()=>h.review.confirm(review.id,['user0']),/关闭自动/);
+  assert.equal(posts,0);
+});
+test('later whitelist changes take effect at confirmation and during selected dispatch',async()=>{
+  let posts=0,release;
+  const h=harness(async(url,options)=>accountReply(url)||new Promise(resolve=>{posts++;release=()=>resolve(json({}));}));
+  h.data.sync.settings.autoMode=false;h.data.sync.settings.blockConcurrency=1;
+  const {review}=await h.review.create({type:'rules',rulesSignature:'[]',users:users(3)});
+  h.data.sync.settings.whitelist=['user0'];
+  await h.review.confirm(review.id,['user0','user1','user2']);await until(()=>posts===1);
+  h.data.sync.settings.whitelist=['user0','user2'];release();await done(h);
+  assert.equal(posts,1);assert.ok(h.data.local['zb:block:owner:user1']);assert.equal(h.data.local.zbTask.skipped,1);
+});
+test('failed and cycling preview pagination preserve collected users without automatic requests',async()=>{
+  let page=0;
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);
+    assert.notEqual(options?.method,'POST');page++;
+    if(page===2)return json({},429,{'Retry-After':'3600'});
+    return json({data:[{url_token:'user'+page}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(page===1?20:0)}});
+  });h.data.sync.settings.autoMode=false;
+  let {review}=await h.review.create({type:'voters',target:'42'});const id=review.id;
+  ({review}=await h.review.more(id));assert.equal(review.users.length,1);assert.match(review.error,/429/);
+  await h.review.more(id);assert.equal(page,2);
+  h.context.Date=class extends Date {static now(){return Date.now()+3601000;}};
+  ({review}=await h.review.more(id));assert.equal(review.users.length,2);
+  // Next page points back to a previously visited cursor.
+  h.context.fetch=async url=>url.endsWith('/me')?accountReply(url):json({data:[{url_token:'last'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset=20'}});
+  ({review}=await h.review.more(id));assert.match(review.error,/分页重复/);assert.equal(review.users.length,2);
 });
