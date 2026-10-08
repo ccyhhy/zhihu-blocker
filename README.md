@@ -62,7 +62,7 @@ Chrome 扩展，按当前页面中的关键词匹配作者，或批量处理回�
 
 知乎[官方用户内容接口](https://developer.zhihu.com/docs?key=user_contents)和[官方关注接口](https://developer.zhihu.com/docs?key=user_followees)默认读本人，其他用户需 OAuth 授权，不能用于直接批量分析陌生人的全部历史。文章赞同者、评论喜爱者、完整平台黑名单同步、多回答合并名单和本地隐藏内容暂未提供。
 
-补充核对：当前[知乎网页脚本](https://static.zhihu.com/heifetz/main.app.8bc05f70e945e7077ba2.js)使用 `answers/{id}/upvoters` 获取回答赞同者，本版已纠正原来的 `voters` 读取地址，实际账号权限和返回结构仍待验收。第三方脚本列出的两个评论点赞者地址，直接导航均显示 `404: Not Found`；直接导航不能替代网页内的正常接口请求，目前未确认评论点赞者名单可读，未加入此功能。
+补充核对：当前[知乎网页脚本](https://static.zhihu.com/heifetz/main.app.8bc05f70e945e7077ba2.js)使用 `answers/{id}/upvoters` 获取回答赞同者，本版已纠正原来的 `voters` 读取地址，实际账号权限和返回结构仍待验收。第三方脚本列出的两个评论点赞者地址（`comments/{id}/likers`、`innervation/comment/{id}/likers`），用户在已登录页面内对评论 `11590891560` 发起只读 GET，均返回 HTTP 404、HTML，没有用户数组、可识别用户或分页。本轮无法提供评论点赞者拉黑功能，未加入按钮；这仅确认上述候选路径在本次环境下不可用，不证明知乎所有客户端或其他接口都不存在。
 
 ## 验证
 
