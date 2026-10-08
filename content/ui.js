@@ -82,7 +82,7 @@
       const target = mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
       if (target) {
         // 父容器新增一张卡片时不遍历它的所有旧卡片。
-        const owner = target.closest('.AnswerItem, .ArticleItem, .CommentItem, .CommentItemV2, [data-comment-id], .ContentItem, .MemberList-item, .ProfileHeader, .Post-Main, article');
+        const owner = ZBScanner.closestUnit(target);
         if (owner) dirty.add(owner);
       }
       for (const node of mutation.addedNodes || []) if (node.nodeType === Node.ELEMENT_NODE) mark(node);
@@ -114,7 +114,7 @@
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.action === 'getPageContext') {
       const answers = ZBScanner.extractAnswerIdsFromPage();
-      respond({ type: ZBScanner.detectPageType(), profileToken: ZBScanner.extractProfileTokenFromUrl(),
+      respond({ type: ZBScanner.detectPageType(), profileToken: ZBScanner.extractProfileTokenFromUrl(), listUnavailable: ZBScanner.listUnavailable(),
         answerId: ZBScanner.extractAnswerIdFromUrl() || answers[0]?.answerId || null, answers });
     }
     if (message.type === 'taskUpdate' && message.task?.status === 'done') flush();

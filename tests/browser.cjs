@@ -28,6 +28,24 @@ try {
     await fixture('<div class="AnswerItem"><a href="/people/alice">Alice</a><div class="RichContent-inner">普通回答</div><div class="CommentItem"><a href="/people/bob">Bob</a><div class="CommentContent">营销号</div></div></div>');
     assert.deepEqual(await matches(rule('comment')),['bob']);assert.deepEqual(await matches(rule('answer')),[]);
   });
+  const modernComment=(id,token,body,target='')=>'<div data-id="'+id+'"><div><a href="/people/'+token+'"><img class="Avatar" alt="'+token+'"></a><div><div><a href="/people/'+token+'">'+token+'</a>'+(target?'<a href="/people/'+target+'">'+target+'</a>':'')+'</div><div class="CommentContent">'+body+'</div><button>回复</button></div></div></div>';
+  await check('modern comments and replies identify avatar author, not reply target or quoted user',async()=>{
+    await fixture('<div data-id="999">'+card('alice','普通回答')+modernComment(101,'bob','营销号 <a href="/people/quoted">引用者</a>','target')+modernComment(102,'carol','普通评论')+'</div><div data-id="103"><a href="/people/uncertain">不明作者</a><div class="CommentContent">营销号</div></div>');
+    assert.deepEqual(await matches(rule('comment')),['bob']);
+    const users=await page.evaluate(()=>scanner.extractUsers().map(u=>({token:u.urlToken,name:u.name,text:u.context.comment})));
+    assert.equal(users.find(u=>u.token==='bob').name,'bob');assert.ok(!users.some(u=>u.token==='target'||u.token==='quoted'||u.token==='uncertain'));
+    assert.equal(await page.evaluate(()=>scanner.closestUnit(document.querySelector('[data-id="101"] .CommentContent')).getAttribute('data-id')),'101');
+  });
+  await check('modern comment nesting and author introduction remain separate from answer content',async()=>{
+    await fixture('<div class="AnswerItem" data-id="2"><div class="AuthorInfo"><a href="/people/alice">Alice</a><div class="AuthorInfo-detail"><div class="AuthorInfo-badgeText ztext">营销号</div></div></div><div class="RichContent-inner">普通回答'+modernComment(101,'bob','普通评论'+modernComment(102,'carol','营销号','bob'))+'</div></div><div class="ContentItem" data-za-detail-view-path-module="UserItem"><span class="UserLink"><a href="/people/dave">Dave</a></span><div class="ContentItem-meta"><div><div class="ztext">营销号</div><div class="ContentItem-status">100 回答</div></div></div></div>');
+    assert.deepEqual(await matches(rule('bio')),['alice','dave']);assert.deepEqual(await matches(rule('answer')),[]);assert.deepEqual(await matches(rule('comment')),['carol']);
+  });
+  await check('current following route works while private lists and topic tabs do not offer user-list actions',async()=>{
+    await fixture('<main>由于对方已设置，他关注的人不可见</main>','https://www.zhihu.com/people/alice/following');
+    assert.equal(await page.evaluate(()=>scanner.detectPageType()),'followees');assert.ok(await page.evaluate(()=>scanner.listUnavailable()));
+    await fixture('','https://www.zhihu.com/people/alice/following/topics');assert.equal(await page.evaluate(()=>scanner.detectPageType()),'feed');
+    await fixture('','https://www.zhihu.com/people/alice/followers');assert.equal(await page.evaluate(()=>scanner.detectPageType()),'followers');
+  });
   await check('article type and /p/ path classify correctly',async()=>{
     await fixture('<article class="Post-Main"><div class="Post-Author"><a href="/people/alice">Alice</a></div><div class="Post-RichTextContainer">营销号</div></article>','https://zhuanlan.zhihu.com/p/123456');
     assert.equal(await page.evaluate(()=>scanner.detectPageType()),'article');
@@ -72,10 +90,18 @@ try {
     await page.waitForFunction(()=>audit.calls.length===2);
     const incremental=await page.evaluate(()=>({units:audit.units,users:audit.users}));
     assert.equal(incremental.units,1);assert.equal(incremental.users,1);
+    await page.evaluate(html=>{const wrapper=document.createElement('div');wrapper.innerHTML=html;document.body.appendChild(wrapper);},modernComment(201,'newcomment','普通评论'));
+    await page.waitForTimeout(700);
+    await page.evaluate(()=>chrome.storage.sync.set({rules:[{id:'c',keyword:'营销号',sources:['comment'],exclude:[]}]},()=>{}));
+    await page.waitForTimeout(800);
+    await page.evaluate(()=>{audit.units=0;audit.users=0;document.querySelector('[data-id="201"] .CommentContent').textContent='营销号';});
+    await page.waitForFunction(()=>audit.calls.length===3);
+    assert.equal(await page.evaluate(()=>audit.calls[2].users[0].urlToken),'newcomment');
+    assert.equal(await page.evaluate(()=>audit.units),1);
     // Removing a rule stops scanning, including already scheduled work.
     await page.evaluate(()=>chrome.storage.sync.set({rules:[]},()=>{}));
     await page.evaluate(()=>{document.querySelector('.RichContent-inner').textContent='营销号';});
-    await page.waitForTimeout(700);assert.equal(await page.evaluate(()=>audit.calls.length),2);
+    await page.waitForTimeout(700);assert.equal(await page.evaluate(()=>audit.calls.length),3);
     return {baseline,incremental};
   });
   await check('500 nested comments are not recursively rescanned when only parent unit changes',async()=>{
@@ -114,7 +140,7 @@ try {
     await page.evaluate(()=>{
       window.popupState={settings:{autoMode:true,whitelist:[],ruleSourceDefaults:['answer'],blockIntervalMin:0,blockIntervalMax:0,pageInterval:0,blockConcurrency:5},rules:[]};
       window.chrome={runtime:{id:'audit',lastError:null,onMessage:{addListener(){}},sendMessage:(m,cb)=>{
-        if(m.action==='getPageContext')return cb({type:'answer',answers:[{answerId:'42',author:'Alice',excerpt:'回答摘要'}]});
+        if(m.action==='getPageContext')return cb(popupState.context || {type:'answer',answers:[{answerId:'42',author:'Alice',excerpt:'回答摘要'}]});
         if(m.action==='getState')return cb({task:{id:'1',status:'paused',fetched:6,blocked:2,skipped:1,failed:1,unknown:1,remaining:1,error:'已暂停',uncertainUsers:[{urlToken:'uncertain-user',name:'<img src=x>'}],evidence:[{name:'Alice',source:'answer',text:'<img src=x onerror=alert(1)>'}]},stats:{account:'owner',daily:2,total:20}});
         cb({});
       }},storage:{onChanged:{addListener(){}},sync:{get:(d,cb)=>cb({...d,...popupState}),set:(v,cb)=>{Object.assign(popupState,v);cb();}}}};
@@ -134,6 +160,9 @@ try {
     assert.ok(layout.scrollWidth<=layout.bodyWidth+1);
     const screenshot=process.env.AUDIT_SCREENSHOT;
     if(screenshot) { await page.evaluate(()=>{document.getElementById('settingsToggle').click();document.querySelector('.exclude-options').open=false;document.getElementById('taskEvidence').textContent='Alice · 回答：示例命中内容';window.scrollTo(0,0);});await page.screenshot({path:screenshot,fullPage:true}); }
+    await page.evaluate(()=>{popupState.context={type:'followees',answers:[],listUnavailable:'对方已设置关注名单不可见，无法处理此名单。'};});
+    await page.locator('#refreshPageBtn').click();await page.waitForFunction(()=>document.getElementById('actionHint').textContent.includes('不可见'));
+    assert.equal(await page.locator('[data-start-task]').count(),0);
     return layout;
   });
   await context.close();

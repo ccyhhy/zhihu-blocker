@@ -30,6 +30,7 @@ async function handle(message, sender) {
   if (message.action === 'getPageContext') return { ...context, tabId: tab.id };
   if (message.action === 'blockFollowList') {
     if (!['followers', 'followees'].includes(context.type) || !context.profileToken) throw new Error('请先打开粉丝或关注列表页面');
+    if (context.listUnavailable) throw new Error(context.listUnavailable);
     return ZBTasks.start({ type: context.type, target: context.profileToken, tabId: tab.id, maxUsers: message.maxUsers });
   }
   if (message.action === 'blockAnswerVoters') {

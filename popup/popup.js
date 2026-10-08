@@ -100,10 +100,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       const context = await send({action:'getPageContext'});
       $('pageStatus').textContent = '当前页面：' + (pageNames[context.type] || '知乎页面');
       $('pageSpecialActions').replaceChildren();
-      if (['followers','followees'].includes(context.type)) control(context.type,context.type === 'followers' ? '拉黑粉丝名单' : '拉黑关注名单','blockFollowList');
+      if (['followers','followees'].includes(context.type) && !context.listUnavailable) control(context.type,context.type === 'followers' ? '拉黑粉丝名单' : '拉黑关注名单','blockFollowList');
       if (context.answers?.length) control('voters','拉黑所选回答赞同者','blockAnswerVoters',context.answers);
       $('actionHint').classList.remove('error');
-      $('actionHint').textContent = '规则匹配已加载的本人内容。名单会整批处理，跳过白名单和本插件已记录的用户。';
+      $('actionHint').textContent = context.listUnavailable || '规则匹配已加载的本人内容。名单会整批处理，跳过白名单和本插件已记录的用户。';
       renderTask(task);
     } catch (e) { $('pageStatus').textContent = '页面暂不可用'; $('pageSpecialActions').replaceChildren(); error(e); }
   }
