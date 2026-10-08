@@ -53,7 +53,7 @@ Chrome 扩展，按当前页面中的关键词匹配作者，或批量处理回�
 | --- | --- |
 | 确认登录账号 | GET /api/v4/me |
 | 拉黑 | POST /api/v4/members/{token}/actions/block |
-| 回答赞同者 | GET /api/v4/answers/{id}/voters |
+| 回答赞同者 | GET /api/v4/answers/{id}/upvoters |
 | 粉丝、关注 | GET /api/v4/members/{token}/followers 或 /followees |
 
 访问由扩展后台执行，使用本机登录状态。页面与弹窗不能提供任意请求地址；分页只接受同一站点、同一名单路径。
@@ -61,6 +61,8 @@ Chrome 扩展，按当前页面中的关键词匹配作者，或批量处理回�
 真实权限、请求验证与返回结构可能变化，不支持的响应会停止任务。2026-10-08 已在登录 Chrome 中核对回答、评论、回复、作者简介、赞同者弹窗和关注页面，补上新版评论与关注路径兼容。网页赞同者名单正常加载，但直接导航账号和赞同者 GET 均出现 `ERR_BLOCKED_BY_CLIENT`，没有取得接口返回，不能据此认定服务器接口失效，也不能确认扩展后台访问可用。测试仍使用模拟接口；真实接口权限、分页结构及拉黑验收尚未完成。
 
 知乎[官方用户内容接口](https://developer.zhihu.com/docs?key=user_contents)和[官方关注接口](https://developer.zhihu.com/docs?key=user_followees)默认读本人，其他用户需 OAuth 授权，不能用于直接批量分析陌生人的全部历史。文章赞同者、评论喜爱者、完整平台黑名单同步、多回答合并名单和本地隐藏内容暂未提供。
+
+补充核对：当前[知乎网页脚本](https://static.zhihu.com/heifetz/main.app.8bc05f70e945e7077ba2.js)使用 `answers/{id}/upvoters` 获取回答赞同者，本版已纠正原来的 `voters` 读取地址，实际账号权限和返回结构仍待验收。第三方脚本列出的两个评论点赞者地址，直接导航均显示 `404: Not Found`；直接导航不能替代网页内的正常接口请求，目前未确认评论点赞者名单可读，未加入此功能。
 
 ## 验证
 

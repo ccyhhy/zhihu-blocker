@@ -96,9 +96,10 @@ test('list pages are processed one at a time, follow actual next URL, and enforc
     if (url.endsWith('/me')) return accountReply(url);
     if (options?.method==='POST') {posts.push(url);return json({});}
     gets.push(url);
+    assert.equal(new URL(url).pathname,'/api/v4/answers/42/upvoters');
     const second=url.includes('offset=3');
     if (second) assert.equal(posts.length,3);
-    return json({data:(second?users(4).slice(3):users(3)).map(u=>({url_token:u.urlToken})),paging:{is_end:second,next:'https://www.zhihu.com/api/v4/answers/42/voters?offset=3&limit=20',totals:4}});
+    return json({data:(second?users(4).slice(3):users(3)).map(u=>({url_token:u.urlToken})),paging:{is_end:second,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset=3&limit=20',totals:4}});
   });
   await h.tasks.start({type:'voters',target:'42',maxUsers:4}); await done(h);
   assert.equal(gets.length,2); assert.equal(posts.length,4);
@@ -110,7 +111,7 @@ test('repeated non-empty pages pause instead of looping',async()=>{
   const h=harness(async(url,options)=>{
     if (url.endsWith('/me')) return accountReply(url);
     if (options?.method==='POST') return json({});
-    pages++; return json({data:[{url_token:'alice'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/voters?offset='+pages}});
+    pages++; return json({data:[{url_token:'alice'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+pages}});
   });
   await h.tasks.start({type:'voters',target:'42',maxUsers:100});
   await until(()=>h.data.local.zbTask.status==='paused');
@@ -133,6 +134,8 @@ test('account and whitelist changes while loading a page take effect before POST
 test('cross-origin paging, malformed schema and invalid token cannot trigger a POST',async()=>{
   const h=harness(async()=>json({data:[{url_token:'alice'}],paging:{is_end:false,next:'https://evil.example/users'}}));
   await assert.rejects(()=>h.api.getPage('voters','42'),/分页游标/);
+  const wrongPath=harness(async()=>json({data:[{url_token:'alice'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/voters?offset=20'}}));
+  await assert.rejects(()=>wrongPath.api.getPage('voters','42'),/分页游标/);
   await assert.rejects(()=>h.api.blockUser('https://evil.example/people/alice'),/标识无效/);
   const malformed=harness(async()=>json({data:[{id:'not-a-url-token'}],paging:{is_end:true}}));
   await assert.rejects(()=>malformed.api.getPage('voters','42'),/用户标识/);
