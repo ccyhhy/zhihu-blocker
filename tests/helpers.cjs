@@ -18,10 +18,10 @@ function harness(fetch, saved = {}, extra = {}) {
     remove(key, cb) { delete data[area][key]; cb?.(); },
   };
   const context = vm.createContext({chrome,fetch,URL,AbortController,setTimeout,clearTimeout,Date,crypto:webcrypto,console,...extra});
-  for (const file of ['lib/storage.js','lib/api.js','lib/tasks.js','lib/review.js','lib/hidden.js']) vm.runInContext(source(file),context,{filename:file});
+  for (const file of ['lib/storage.js','lib/api.js','lib/tasks.js','lib/hidden.js']) vm.runInContext(source(file),context,{filename:file});
   const tasks = vm.runInContext('ZBTasks',context), store = vm.runInContext('ZBStorage',context), api = vm.runInContext('ZhihuAPI',context);
-  const review = vm.runInContext('ZBReview',context), hidden = vm.runInContext('ZBHidden',context);
-  return {data,writes,events,context,tasks,store,api,review,hidden};
+  const hidden = vm.runInContext('ZBHidden',context);
+  return {data,writes,events,context,tasks,store,api,hidden};
 }
 const json = (value,status=200,headers={}) => new Response(JSON.stringify(value),{status,headers});
 const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));

@@ -9,12 +9,14 @@
 <body>
   <header class="header">
     <div><h1>知乎批量拉黑</h1><p>回答赞同者 · 粉丝 · 悬浮屏蔽</p></div>
-    <div class="header-actions"><span id="speedMode" class="badge">手动选择</span><button id="closePanelBtn" class="btn btn-quiet" type="button" hidden>收起</button><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
+    <div class="header-actions"><span id="speedMode" class="badge">直接批量</span><button id="closePanelBtn" class="btn btn-quiet" type="button" hidden>收起</button><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
   </header>
   <main>
     <section class="section" id="actionSection">
       <div class="section-heading"><h2>当前页面</h2><button class="btn btn-quiet" id="refreshPageBtn" type="button">重新识别</button></div>
       <div id="pageStatus" class="page-status">正在识别当前页面…</div>
+      <label class="field-label" for="maxUsersInput">本次最多处理（留空或 0 表示全部）</label>
+      <input id="maxUsersInput" type="number" min="0" step="1" placeholder="全部" style="width:100%">
       <div id="pageSpecialActions"></div>
       <p id="actionHint" class="action-hint" role="status" aria-live="polite"></p>
       <div class="progress-wrap" id="actionProgress" style="display:none" aria-live="polite">
@@ -27,19 +29,9 @@
       </div>
       <details class="task-evidence" hidden><summary>查看命中内容</summary><div id="taskEvidence"></div></details>
     </section>
-    <section class="section" id="reviewSection" hidden>
-      <div class="section-heading"><h2>拉黑前预览</h2><button id="discardReviewBtn" class="btn btn-quiet" type="button">关闭预览</button></div>
-      <p id="reviewSummary" class="review-summary" role="status" aria-live="polite"></p>
-      <div class="review-toolbar"><button id="selectPageBtn" class="btn btn-secondary" type="button">选中本页</button><span id="selectedCount" class="muted"></span></div>
-      <div id="reviewList" class="review-list"></div>
-      <div class="review-pagination"><button id="reviewPrevBtn" class="btn btn-quiet" type="button">上一页</button><span id="reviewPage" class="muted"></span><button id="reviewNextBtn" class="btn btn-quiet" type="button">下一页</button></div>
-      <button id="loadMoreReviewBtn" class="btn btn-secondary btn-full" type="button" hidden>读取下一批候选</button>
-      <p id="reviewHint" class="action-hint" role="status" aria-live="polite"></p>
-      <button id="confirmReviewBtn" class="btn btn-danger btn-full" type="button" disabled>拉黑并屏蔽勾选的用户</button>
-    </section>
     <section class="section">
       <div class="section-heading"><h2>评论赞同者</h2><span class="muted">当前不可用</span></div>
-      <button class="btn btn-secondary btn-full" type="button" disabled>预览评论赞同者</button>
+      <button class="btn btn-secondary btn-full" type="button" disabled>拉黑评论赞同者</button>
       <p class="action-hint">已核对的两个名单接口均返回 404，无法取得赞同者。不会改为处理评论作者。</p>
     </section>
     <section class="section">
@@ -60,6 +52,7 @@
         <div class="setting-row"><span id="intervalLabel">拉黑间隔（秒）</span><div class="interval-inputs"><input type="number" id="intervalMin" aria-label="最小拉黑间隔" min="0" max="30" step="0.1" value="0"><span>至</span><input type="number" id="intervalMax" aria-label="最大拉黑间隔" min="0" max="30" step="0.1" value="0"></div></div>
         <div class="setting-row"><label for="blockConcurrencyInput">并发拉黑数</label><input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5"></div>
         <p class="muted">间隔大于 0 时逐个处理；接口报错会暂停任务。</p>
+        <button id="fastModeBtn" class="btn btn-secondary btn-full" type="button">快速模式：5 并发、无间隔</button>
         <label for="whitelistInput" class="field-label">白名单</label>
         <textarea id="whitelistInput" rows="3" placeholder="知乎主页地址或用户标识，每行一个"></textarea>
         <button id="saveSettingsBtn" class="btn btn-secondary btn-full" type="button">保存设置</button>

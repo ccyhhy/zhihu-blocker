@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "知乎批量拉黑",
-  "description": "预览回答赞同者和某人的粉丝后批量拉黑；在用户悬浮卡片中屏蔽并隐藏其内容",
-  "version": "1.3.0",
+  "description": "自动逐页拉黑回答赞同者和某人的粉丝；在用户悬浮卡片中屏蔽并隐藏其内容",
+  "version": "1.4.0",
   "minimum_chrome_version": "110",
   "background": {
     "service_worker": "background.js"

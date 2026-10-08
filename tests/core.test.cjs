@@ -7,8 +7,8 @@ const accountReply = url => url.endsWith('/me') ? json({url_token:'owner'}) : nu
 const done = h => until(()=>h.data.local.zbTask?.status === 'done');
 test('manifest references, imported scripts and JavaScript syntax',()=>{
   const manifest=JSON.parse(source('manifest.json'));
-  assert.equal(manifest.version,'1.3.0');
-  for (const file of ['background.js','lib/tasks.js','popup/popup.js',...manifest.content_scripts.flatMap(x=>x.js),'lib/api.js','lib/review.js','lib/hidden.js']) new vm.Script(source(file),{filename:file});
+  assert.equal(manifest.version,'1.4.0');
+  for (const file of ['background.js','lib/tasks.js','popup/popup.js',...manifest.content_scripts.flatMap(x=>x.js),'lib/api.js','lib/hidden.js']) new vm.Script(source(file),{filename:file});
   for (const file of [manifest.action.default_popup,...Object.values(manifest.icons)]) assert.ok(source(file).length);
   assert.ok(!manifest.content_scripts[0].js.includes('lib/api.js'));
 });
@@ -212,55 +212,9 @@ test('legacy automatic and followee tasks stop while saved rules and preferences
   const second=harness(async url=>accountReply(url)||(++posts,json({})),{zbTask:{...saved.zbTask,type:'followees',status:'paused'}});
   assert.equal((await second.tasks.resume()).task.status,'cancelled');assert.equal(posts,0);
 });
-test('preview persists without POST, filters protected users and confirms only selected candidates',async()=>{
-  const posts=[];
-  const h=harness(async(url,options)=>{
-    if(url.endsWith('/me'))return accountReply(url);
-    if(options?.method==='POST'){posts.push(url);return json({});}
-    return json({data:[{url_token:'owner'},...users(5).map(u=>({url_token:u.urlToken,name:u.name}))],paging:{is_end:true}});
-  },{'zb:block:owner:user0':1,'zb:unknown:owner:user1':1});h.data.sync.settings.whitelist=['user2'];
-  const {review}=await h.review.create({type:'followers',target:'person'});
-  assert.equal(posts.length,0);assert.equal(review.users.length,6);assert.equal(review.selected.length,0);
-  assert.deepEqual(copy(review.users.map(u=>u.skip)),['当前账号','已记录拉黑','结果待核对','白名单','','']);
-  await assert.rejects(()=>h.review.confirm(review.id,['outsider']),/不在本次预览/);
-  await h.review.select(review.id,['user3','user0','user2']);
-  const restarted=harness(async(url,options)=>accountReply(url)||(posts.push(url),json({})),copy(h.data.local));
-  restarted.data.sync.settings.whitelist=['user2'];
-  assert.deepEqual(copy((await restarted.review.get()).selected),['user3','user0','user2']);
-  await restarted.review.confirm(review.id,['user3','user0','user2']);await done(restarted);
-  assert.equal(posts.length,1);assert.ok(posts[0].includes('/members/user3/'));assert.ok(restarted.data.local['zb:hide:user3']);
-  assert.equal(await restarted.review.get(),null);await assert.rejects(()=>restarted.review.confirm(review.id,['user4']),/预览已变更/);
-});
-test('preview pages load only on request, cap at 200, and confirmed tasks retain more than 20 users',async()=>{
-  let pages=0,posts=0;
-  const h=harness(async(url,options)=>{
-    if(url.endsWith('/me'))return accountReply(url);
-    if(options?.method==='POST'){posts++;return json({});}
-    pages++;const offset=Number(new URL(url).searchParams.get('offset'));
-    return json({data:users(220).slice(offset,offset+20).map(u=>({url_token:u.urlToken})),paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(offset+20)}});
-  });
-  let {review}=await h.review.create({type:'voters',target:'42',maxUsers:2000});
-  assert.equal(pages,1);assert.equal(posts,0);assert.equal(review.users.length,20);assert.equal(review.maxUsers,200);
-  const id=review.id;({review}=await h.review.more(id));assert.equal(review.users.length,40);
-  await h.review.select(id,['user0']);({review}=await h.review.more(id));assert.deepEqual(copy(review.selected),['user0']);
-  for(let i=3;i<10;i++)({review}=await h.review.more(id));
-  assert.equal(review.users.length,200);assert.equal(pages,10);await h.review.more(id);assert.equal(pages,10);assert.equal(posts,0);
-  await h.review.confirm(id,review.users.slice(0,25).map(u=>u.urlToken));await done(h);
-  assert.equal(posts,25);assert.equal(h.data.local.zbTask.fetched,25);assert.equal(Object.keys(h.data.local).filter(k=>k.startsWith('zb:hide:')).length,25);
-});
-test('account changes reject confirmations; retired and unsupported preview types make no requests',async()=>{
-  let account='owner',posts=0,gets=0;
-  const h=harness(async(url,options)=>{
-    if(url.endsWith('/me'))return json({url_token:account});
-    if(options?.method==='POST'){posts++;return json({});}gets++;
-    return json({data:[{url_token:'alice'}],paging:{is_end:true}});
-  });
-  const {review}=await h.review.create({type:'followers',target:'person'});
-  account='other';await assert.rejects(()=>h.review.confirm(review.id,['alice']),/账号已切换/);assert.equal(posts,0);
-  for(const type of ['rules','followees','commentVoters'])await assert.rejects(()=>h.review.create({type,target:'person'}),/只支持/);
-  assert.equal(gets,1);
-  const old=harness(async()=>json({}),{zbReview:{type:'rules',id:'old'}});assert.equal(await old.review.get(),null);
-});
+
+
+
 test('whitelist changes during selected dispatch prevent later POST and local hiding',async()=>{
   let posts=0,release;
   const h=harness(async(url,options)=>{
@@ -268,25 +222,12 @@ test('whitelist changes during selected dispatch prevent later POST and local hi
     if(options?.method==='POST')return new Promise(resolve=>{posts++;release=()=>resolve(json({}));});
     return json({data:users(3).map(u=>({url_token:u.urlToken})),paging:{is_end:true}});
   });h.data.sync.settings.blockConcurrency=1;
-  const {review}=await h.review.create({type:'followers',target:'person'});h.data.sync.settings.whitelist=['user0'];
-  await h.review.confirm(review.id,['user0','user1','user2']);await until(()=>posts===1);
+  h.data.sync.settings.whitelist=['user0'];
+  await h.tasks.start({type:'selected',users:users(3)});await until(()=>posts===1);
   h.data.sync.settings.whitelist=['user0','user2'];release();await done(h);
   assert.equal(posts,1);assert.ok(h.data.local['zb:block:owner:user1']);assert.ok(h.data.local['zb:hide:user1']);assert.ok(!h.data.local['zb:hide:user2']);
 });
-test('failed and cycling preview pagination preserve candidates without automatic requests',async()=>{
-  let page=0;
-  const h=harness(async(url,options)=>{
-    if(url.endsWith('/me'))return accountReply(url);assert.notEqual(options?.method,'POST');page++;
-    if(page===2)return json({},429,{'Retry-After':'3600'});
-    return json({data:[{url_token:'user'+page}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(page===1?20:0)}});
-  });
-  let {review}=await h.review.create({type:'voters',target:'42'});const id=review.id;
-  ({review}=await h.review.more(id));assert.equal(review.users.length,1);assert.match(review.error,/429/);await h.review.more(id);assert.equal(page,2);
-  h.context.Date=class extends Date {static now(){return Date.now()+3601000;}};
-  ({review}=await h.review.more(id));assert.equal(review.users.length,2);
-  h.context.fetch=async url=>url.endsWith('/me')?accountReply(url):json({data:[{url_token:'last'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset=20'}});
-  ({review}=await h.review.more(id));assert.match(review.error,/分页重复/);assert.equal(review.users.length,2);
-});
+
 test('local hiding is independent of login, rejects protected users, and restores without DELETE',async()=>{
   let requests=0;
   const h=harness(async()=>{requests++;return json({},401);},{zbAccount:'owner'});
@@ -318,4 +259,73 @@ test('known account records migrate to local hiding once; global legacy and unkn
   assert.ok(h.data.local['zb:hide:alice']);assert.ok(!h.data.local['zb:hide:bob']);assert.ok(!h.data.local['zb:hide:carol']);assert.ok(!h.data.local['zb:hide:legacyUser']);
   await h.hidden.remove('alice');
   const restart=harness(async url=>accountReply(url)||json({}),copy(h.data.local));await restart.tasks.getState();assert.ok(!restart.data.local['zb:hide:alice']);
+});
+
+test('unlimited bulk processing crosses 20, 200 and 2000 users with a single-page queue',async()=>{
+  let pages=0,posts=0,largestQueue=0; const count=2105;
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);
+    if(options?.method==='POST'){posts++;return json({});}
+    pages++; const offset=Number(new URL(url).searchParams.get('offset'));
+    assert.equal(posts,offset);largestQueue=Math.max(largestQueue,h.data.local.zbTask.queue.length);
+    return json({data:Array.from({length:Math.min(20,count-offset)},(_,i)=>({url_token:'bulk'+(offset+i)})),paging:{is_end:offset+20>=count,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(offset+20)}});
+  });
+  await h.tasks.start({type:'voters',target:'42'});await done(h);
+  assert.equal(posts,count);assert.equal(pages,106);assert.equal(h.data.local.zbTask.maxUsers,0);
+  assert.ok(largestQueue<=20);assert.ok(h.data.local.zbTask.queue.length<=20);assert.equal(h.data.local.zbTask.recentCursors.length,64);
+});
+test('bulk dispatch skips self, whitelist, old blocks and uncertain users across pages',async()=>{
+  const posts=[];let pages=0;
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);
+    if(options?.method==='POST'){posts.push(url);return json({});}
+    const data=pages++===0?['owner','white','old','unknown','alice']:['alice','bob'];
+    return json({data:data.map(url_token=>({url_token})),paging:{is_end:pages===2,next:'https://www.zhihu.com/api/v4/members/person/followers?offset=5'}});
+  },{'zb:block:owner:old':1,'zb:unknown:owner:unknown':1});h.data.sync.settings.whitelist=['white'];
+  await h.tasks.start({type:'followers',target:'person',maxUsers:0});await done(h);
+  assert.equal(posts.length,2);assert.ok(posts[0].includes('/alice/'));assert.ok(posts[1].includes('/bob/'));
+  assert.equal(h.data.local.zbTask.skipped,4);assert.equal(h.data.local.zbTask.unknown,1);
+});
+test('empty terminal lists finish and cyclic cursors pause without repeating posts',async()=>{
+  const empty=harness(async url=>accountReply(url)||json({data:[],paging:{is_end:true}}));
+  await empty.tasks.start({type:'voters',target:'42'});await done(empty);assert.equal(empty.data.local.zbTask.fetched,0);
+  let pages=0,posts=0;
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);if(options?.method==='POST'){posts++;return json({});}
+    pages++;const second=url.includes('offset=20');
+    return json({data:[{url_token:second?'bob':'alice'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset='+(second?0:20)}});
+  });
+  await h.tasks.start({type:'voters',target:'42'});await until(()=>h.data.local.zbTask.status==='paused');
+  assert.equal(pages,3);assert.equal(posts,2);assert.match(h.data.local.zbTask.error,/分页重复/);
+});
+test('bulk pause and restart resume the current page then follow the saved next cursor',async()=>{
+  let pages=0,release,posts=[];
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);
+    if(options?.method==='POST'){posts.push(url);return new Promise(resolve=>{release=()=>resolve(json({}));});}
+    pages++;return json({data:[{url_token:'alice'},{url_token:'bob'}],paging:{is_end:false,next:'https://www.zhihu.com/api/v4/answers/42/upvoters?offset=2'}});
+  });h.data.sync.settings.blockConcurrency=1;
+  await h.tasks.start({type:'voters',target:'42'});await until(()=>!!release);await h.tasks.pause();release();await until(()=>h.data.local.zbTask.blocked===1);await sleep(5);
+  assert.equal(pages,1);
+  const saved=copy(h.data.local),gets=[];
+  const restarted=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);if(options?.method==='POST'){posts.push(url);return json({});}
+    gets.push(url);return json({data:[{url_token:'carol'}],paging:{is_end:true}});
+  },saved);await restarted.tasks.resume();await done(restarted);
+  assert.equal(posts.length,3);assert.equal(gets.length,1);assert.ok(gets[0].includes('offset=2'));
+  assert.equal(restarted.data.local.zbTask.blocked,3);
+});
+test('direct background routes start bulk work and reject removed preview or wrong answer targets',async()=>{
+  const posts=[],gets=[];
+  const h=harness(async(url,options)=>{
+    if(url.endsWith('/me'))return accountReply(url);if(options?.method==='POST'){posts.push(url);return json({});}
+    gets.push(url);return json({data:[{url_token:'person1'}],paging:{is_end:true}});
+  },{zbReview:{id:'old',type:'voters',selected:['oldUser']}});
+  h.context.importScripts=()=>{};h.context.chrome.tabs={sendMessage:(id,m,cb)=>cb({answers:[{answerId:'42'}]})};
+  vm.runInContext(source('background.js'),h.context);const handle=vm.runInContext('handle',h.context),sender={id:'test-extension',tab:{id:1,url:'https://www.zhihu.com/question/1/answer/42'}};
+  for(const action of ['previewAnswerVoters','previewFollowers','confirmReview','loadMoreReview'])await assert.rejects(()=>handle({action},sender),/取消预览/);
+  await assert.rejects(()=>handle({action:'blockAnswerVoters',answerId:'99'},sender),/不在当前页面/);assert.equal(posts.length,0);
+  await handle({action:'blockAnswerVoters',answerId:'42'},sender);await done(h);assert.equal(posts.length,1);assert.ok(gets[0].includes('/answers/42/upvoters'));
+  await handle({action:'blockFollowers',profileToken:'https://www.zhihu.com/people/person'},sender);await done(h);
+  assert.ok(gets[1].includes('/members/person/followers'));assert.ok(!gets.some(url=>url.includes('followees')));assert.equal(h.data.local.zbReview.id,'old');
 });

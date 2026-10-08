@@ -33,7 +33,7 @@
   async function action(message) {
     try {
       const result = await send(message);
-      if (message.action.startsWith('preview')) { if (result.review) openPanel(); }
+      if (['blockFollowers','blockAnswerVoters'].includes(message.action)) { if (result.busy) toast('已有拉黑任务，请在面板继续或结束该任务'); openPanel(); }
       else toast(result.message || (result.hidden ? '已在本机屏蔽，该操作未请求知乎拉黑' : '已恢复本机显示，知乎黑名单未改变'));
     } catch (error) { toast(error.message); }
   }
@@ -49,8 +49,8 @@
       if (user) {
         button('屏蔽并拉黑',() => action({action:'shieldUser',user:entry.user}));
         button('仅本机屏蔽',() => action(hidden.has(entry.user.urlToken) ? {action:'unhideUser',urlToken:entry.user.urlToken} : {action:'hideUser',user:entry.user}));
-        button('预览粉丝',() => action({action:'previewFollowers',profileToken:entry.user.urlToken,maxUsers:100}));
-      } else button('预览回答赞同者',() => action({action:'previewAnswerVoters',answerId:entry.answerId,maxUsers:100}));
+        button('拉黑此人的粉丝',() => action({action:'blockFollowers',profileToken:entry.user.urlToken,maxUsers:0}));
+      } else button('拉黑回答赞同者',() => action({action:'blockAnswerVoters',answerId:entry.answerId,maxUsers:0}));
       shadow.append(style,wrap); owner.appendChild(host);
     }
     if (!entry.host.isConnected) owner.appendChild(entry.host);
