@@ -15,12 +15,13 @@ function harness(fetch, saved = {}, extra = {}) {
       cb(copy({...keys,...Object.fromEntries(Object.keys(keys).filter(key => key in data[area]).map(key => [key,data[area][key]]))}));
     },
     set(value, cb) { const item = copy(value); Object.assign(data[area],item); writes.push(item); cb?.(); },
+    remove(key, cb) { delete data[area][key]; cb?.(); },
   };
   const context = vm.createContext({chrome,fetch,URL,AbortController,setTimeout,clearTimeout,Date,crypto:webcrypto,console,...extra});
-  for (const file of ['lib/storage.js','lib/api.js','lib/tasks.js','lib/review.js']) vm.runInContext(source(file),context,{filename:file});
+  for (const file of ['lib/storage.js','lib/api.js','lib/tasks.js','lib/review.js','lib/hidden.js']) vm.runInContext(source(file),context,{filename:file});
   const tasks = vm.runInContext('ZBTasks',context), store = vm.runInContext('ZBStorage',context), api = vm.runInContext('ZhihuAPI',context);
-  const review = vm.runInContext('ZBReview',context);
-  return {data,writes,events,context,tasks,store,api,review};
+  const review = vm.runInContext('ZBReview',context), hidden = vm.runInContext('ZBHidden',context);
+  return {data,writes,events,context,tasks,store,api,review,hidden};
 }
 const json = (value,status=200,headers={}) => new Response(JSON.stringify(value),{status,headers});
 const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));

@@ -8,8 +8,8 @@
 </head>
 <body>
   <header class="header">
-    <div><h1>知乎批量拉黑</h1><p>先预览，再选择拉黑</p></div>
-    <div class="header-actions"><span id="speedMode" class="badge">先预览再拉黑</span><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
+    <div><h1>知乎批量拉黑</h1><p>回答赞同者 · 粉丝 · 悬浮屏蔽</p></div>
+    <div class="header-actions"><span id="speedMode" class="badge">手动选择</span><button id="closePanelBtn" class="btn btn-quiet" type="button" hidden>收起</button><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
   </header>
   <main>
     <section class="section" id="actionSection">
@@ -35,24 +35,17 @@
       <div class="review-pagination"><button id="reviewPrevBtn" class="btn btn-quiet" type="button">上一页</button><span id="reviewPage" class="muted"></span><button id="reviewNextBtn" class="btn btn-quiet" type="button">下一页</button></div>
       <button id="loadMoreReviewBtn" class="btn btn-secondary btn-full" type="button" hidden>读取下一批候选</button>
       <p id="reviewHint" class="action-hint" role="status" aria-live="polite"></p>
-      <button id="confirmReviewBtn" class="btn btn-danger btn-full" type="button" disabled>拉黑勾选的用户</button>
+      <button id="confirmReviewBtn" class="btn btn-danger btn-full" type="button" disabled>拉黑并屏蔽勾选的用户</button>
     </section>
     <section class="section">
-      <div class="section-heading"><h2>关键词规则</h2><span class="muted" id="ruleCount"></span></div>
-      <div class="add-rule">
-        <label class="sr-only" for="keywordInput">关键词</label>
-        <input type="text" id="keywordInput" placeholder="输入要屏蔽的关键词" maxlength="120">
-        <div class="source-checks" aria-label="匹配来源">
-          <label><input type="checkbox" name="source" value="bio"><span>签名</span></label>
-          <label><input type="checkbox" name="source" value="comment"><span>评论</span></label>
-          <label><input type="checkbox" name="source" value="answer"><span>回答</span></label>
-          <label><input type="checkbox" name="source" value="article"><span>文章</span></label>
-        </div>
-        <details class="exclude-options"><summary>排除词（可选）</summary><label class="sr-only" for="excludeInput">排除词</label><input type="text" id="excludeInput" placeholder="多个词用逗号分隔"><p class="muted">同一条内容含排除词时，不按这条规则处理。</p></details>
-        <button id="addRuleBtn" class="btn btn-primary btn-full" type="button">添加规则</button>
-      </div>
-      <div id="ruleList" class="rule-list"></div>
-      <div id="noRules" class="empty-hint">暂无规则。添加后可预览已加载的内容。</div>
+      <div class="section-heading"><h2>评论赞同者</h2><span class="muted">当前不可用</span></div>
+      <button class="btn btn-secondary btn-full" type="button" disabled>预览评论赞同者</button>
+      <p class="action-hint">已核对的两个名单接口均返回 404，无法取得赞同者。不会改为处理评论作者。</p>
+    </section>
+    <section class="section">
+      <div class="section-heading"><h2>悬浮卡片屏蔽</h2></div>
+      <p class="action-hint">鼠标移到用户名上，在知乎用户卡片中选择「屏蔽并拉黑」或「仅本机屏蔽」。评论和用户主页也有入口。</p>
+      <details id="hiddenDetails"><summary>本机屏蔽名单 <span id="hiddenCount"></span></summary><div id="hiddenList" class="rule-list"></div><p class="muted">恢复本机显示不会解除知乎黑名单。名单按用户主页标识保存，旧关键词规则已停用并保留原数据。</p></details>
     </section>
     <section class="section stats-section">
       <div class="stats">
@@ -64,9 +57,7 @@
     <section class="section settings-section">
       <button class="section-toggle" id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsBody">设置 <span class="arrow" aria-hidden="true">›</span></button>
       <div class="section-body" id="settingsBody" style="display:none">
-        <div class="setting-row"><label for="autoModeInput">自动拉黑（跳过预览）</label><input type="checkbox" id="autoModeInput"></div>
         <div class="setting-row"><span id="intervalLabel">拉黑间隔（秒）</span><div class="interval-inputs"><input type="number" id="intervalMin" aria-label="最小拉黑间隔" min="0" max="30" step="0.1" value="0"><span>至</span><input type="number" id="intervalMax" aria-label="最大拉黑间隔" min="0" max="30" step="0.1" value="0"></div></div>
-        <div class="setting-row"><label for="pageIntervalInput">翻页间隔（秒）</label><input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0"></div>
         <div class="setting-row"><label for="blockConcurrencyInput">并发拉黑数</label><input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5"></div>
         <p class="muted">间隔大于 0 时逐个处理；接口报错会暂停任务。</p>
         <label for="whitelistInput" class="field-label">白名单</label>

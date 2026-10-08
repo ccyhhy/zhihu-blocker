@@ -1,6 +1,6 @@
 * { box-sizing: border-box; }
 :root { color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; color: #233044; font-size: 13px; }
-body { margin: 0; width: 390px; background: #f4f6f9; }
+body { margin: 0; width: 390px; max-width: 100vw; background: #f4f6f9; }
 button,input,select,textarea { font: inherit; }
 button,summary,input[type="checkbox"] { cursor: pointer; }
 [hidden] { display: none !important; }
