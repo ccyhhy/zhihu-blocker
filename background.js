@@ -1,83 +1,49 @@
-/**
- * Background service worker
- * 负责统一转发 popup -> content 的指令，以及 content -> popup 的进度事件。
- */
-
-function getActiveTab() {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        reject(new Error(err.message || String(err)));
-        return;
-      }
-
-      const tab = tabs?.[0];
-      if (!tab?.id) {
-        reject(new Error('未找到当前页面'));
-        return;
-      }
-      resolve(tab);
-    });
-  });
+/** 页面只提供已识别目标；固定接口与统一任务在后台执行。 */
+importScripts('lib/storage.js', 'lib/api.js', 'lib/tasks.js');
+const isZhihu = value => {
+  try { const u = new URL(value); return u.protocol === 'https:' && /(^|\.)zhihu\.com$/.test(u.hostname); } catch { return false; }
+};
+function activeTab() {
+  return new Promise((resolve, reject) => chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    const error = chrome.runtime.lastError;
+    if (error || !tabs[0]?.id || !isZhihu(tabs[0].url)) reject(new Error('请先打开知乎页面'));
+    else resolve(tabs[0]);
+  }));
 }
-
-function sendToTab(tabId, message) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        reject(new Error('无法连接到页面，请刷新知乎页面后重试'));
-        return;
-      }
-      resolve(response);
-    });
-  });
+function pageContext(tab) {
+  return new Promise((resolve, reject) => chrome.tabs.sendMessage(tab.id, { action: 'getPageContext' }, response => {
+    const error = chrome.runtime.lastError;
+    if (error || !response) reject(new Error('无法连接页面，请刷新知乎页面后重试')); else resolve(response);
+  }));
 }
-
-async function sendToActiveZhihuTab(message) {
-  const tab = await getActiveTab();
-  if (!/^https?:\/\/([^/]+\.)?zhihu\.com\//.test(tab.url || '')) {
-    throw new Error('请先打开知乎页面');
+async function handle(message, sender) {
+  if (message.action === 'getState') return ZBTasks.getState();
+  if (message.action === 'pauseTask') return ZBTasks.pause();
+  if (message.action === 'endTask') return ZBTasks.end();
+  if (message.action === 'resumeTask') return ZBTasks.resume();
+  if (message.action === 'enqueueAuto') {
+    if (!sender.tab?.id || !isZhihu(sender.tab.url)) throw new Error('页面来源无效');
+    if (typeof message.rulesSignature !== 'string') throw new Error('插件已更新，请刷新知乎页面');
+    return ZBTasks.start({ type: 'auto', tabId: sender.tab.id, users: message.users, rulesSignature: message.rulesSignature });
   }
-  return sendToTab(tab.id, message);
-}
-
-async function handlePopupCommand(message) {
-  switch (message.action) {
-    case 'getPageContext':
-      return sendToActiveZhihuTab({ action: 'getPageContext' });
-    case 'scanCurrentPage':
-      return sendToActiveZhihuTab({ action: 'scan' });
-    case 'blockMatchedUsers':
-      return sendToActiveZhihuTab({ action: 'blockList', users: message.users || [] });
-    case 'blockFollowList':
-      return sendToActiveZhihuTab({ action: 'blockFollowers', maxUsers: message.maxUsers });
-    case 'blockAnswerVoters':
-      return sendToActiveZhihuTab({ action: 'blockVoters', maxUsers: message.maxUsers, answerId: message.answerId });
-    default:
-      throw new Error('未知操作');
+  const tab = await activeTab(), context = await pageContext(tab);
+  if (message.action === 'getPageContext') return { ...context, tabId: tab.id };
+  if (message.action === 'blockFollowList') {
+    if (!['followers', 'followees'].includes(context.type) || !context.profileToken) throw new Error('请先打开粉丝或关注列表页面');
+    return ZBTasks.start({ type: context.type, target: context.profileToken, tabId: tab.id, maxUsers: message.maxUsers });
   }
-}
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.channel === 'zb-ui-event') {
-    try {
-      chrome.runtime.sendMessage(message.event, () => {
-        // popup 关闭时没有接收方，这是正常情况。
-        void chrome.runtime.lastError;
-      });
-    } catch {
-      // 事件通知失败不影响正在执行的拉黑任务。
-    }
-    return;
+  if (message.action === 'blockAnswerVoters') {
+    const answerId = String(message.answerId || '');
+    if (!(context.answers || []).some(a => a.answerId === answerId)) throw new Error('所选回答已不在当前页面，请重新识别');
+    return ZBTasks.start({ type: 'voters', target: answerId, tabId: tab.id, maxUsers: message.maxUsers });
   }
-
-  if (message?.target !== 'background') return;
-
-  handlePopupCommand(message)
-    .then((result) => sendResponse(result || {}))
-    .catch((error) => sendResponse({ error: error.message }));
-
+  throw new Error('未知操作');
+}
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message?.target !== 'background' || sender.id !== chrome.runtime.id) return;
+  handle(message, sender).then(respond).catch(error => respond({ error: error.message }));
   return true;
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && (changes.rules || changes.settings)) ZBTasks.refreshAutoPolicy().catch(() => {});
 });

@@ -1,272 +1,123 @@
-/**
- * Content script — 后台逻辑 + 评论区拉黑按钮注入
- */
+/** 增量识别页面；单个观察器，不在页面调用拉黑接口。 */
 (async () => {
-  'use strict';
-
-  let isBlocking = false;
-  let autoBlockCount = 0;
-  let contextValid = true;
-  let commentObserver = null;
-  let autoObserver = null;
-  let autoScanTimer = null;
-
-  // ── 扩展上下文检测 ──────────────────────────
-  function isContextAlive() {
-    try {
-      // chrome.runtime.id 在上下文失效后会变成 undefined
-      return !!chrome.runtime?.id;
-    } catch {
-      return false;
-    }
+  let rules = [], settings = {}, valid = true, scanning = false, sending = false, generation = 0;
+  let timer = null, maxTimer = null, retryTimer = null, fingerprints = new WeakMap();
+  const dirty = new Set(), pending = new Map(), accepted = new Set();
+  function stop() {
+    valid = false; observer.disconnect();
+    clearTimeout(timer); clearTimeout(maxTimer); clearTimeout(retryTimer);
+    chrome.storage.onChanged.removeListener(onChanged);
   }
-
-  function safeSendMessage(msg) {
-    if (!isContextAlive()) {
-      invalidateContext();
-      return Promise.resolve();
-    }
-    return new Promise(resolve => {
+  function send(message) {
+    return new Promise((resolve, reject) => {
       try {
-        chrome.runtime.sendMessage(msg, () => {
-          const err = chrome.runtime.lastError;
-          if (err && /Extension context invalidated/i.test(err.message || '')) {
-            invalidateContext();
-          }
-          resolve();
+        chrome.runtime.sendMessage({ target: 'background', ...message }, response => {
+          const error = chrome.runtime.lastError;
+          if (error) { stop(); reject(new Error(error.message)); }
+          else resolve(response || {});
         });
-      } catch {
-        invalidateContext();
-        resolve();
-      }
+      } catch (error) { stop(); reject(error); }
     });
   }
-
-  function invalidateContext() {
-    if (!contextValid) return;
-    contextValid = false;
-    isBlocking = false;
-    if (commentObserver) commentObserver.disconnect();
-    if (autoObserver) autoObserver.disconnect();
-    if (autoScanTimer) {
-      clearTimeout(autoScanTimer);
-      autoScanTimer = null;
-    }
-  }
-
-  // ── 评论区识别 ────────────────
-  function injectCommentButtons() {
-    if (!contextValid) return;
-    const comments = ZBScanner.extractCommentIds();
-    if (comments.length > 0) {
-      document.body.dataset.zbCommentsDetected = String(comments.length);
-    }
-  }
-
-  injectCommentButtons();
-  commentObserver = new MutationObserver(() => {
-    if (contextValid) injectCommentButtons();
-  });
-  commentObserver.observe(document.body, { childList: true, subtree: true });
-
-  // ── 监听 popup 消息 ────────────────────────
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (!contextValid) return;
-
-    if (msg.action === 'scan') {
-      ZBScanner.scan().then(matched => {
-        sendResponse({
-          users: matched.map(u => ({
-            urlToken: u.urlToken,
-            name: u.name,
-            matchedRules: u.matchedRules?.map(m => m.rule.keyword) || [],
-          })),
-        });
-      }).catch(e => sendResponse({ users: [], error: e.message }));
-      return true;
-    }
-
-    if (msg.action === 'blockList') {
-      if (isBlocking) {
-        sendResponse({ error: '正在拉黑中，请稍候' });
-        return;
-      }
-      isBlocking = true;
-      ZhihuAPI.batchBlock(msg.users, (current, total, user, success, reason) => {
-        safeSendMessage({ type: 'blockProgress', current, total, name: user.name || user.urlToken, success, reason });
-      }).then(result => {
-        isBlocking = false;
-        sendResponse({ result });
-      }).catch(e => {
-        isBlocking = false;
-        sendResponse({ error: e.message });
-      });
-      return true;
-    }
-
-    if (msg.action === 'blockFollowers') {
-      if (isBlocking) {
-        sendResponse({ error: '正在拉黑中' });
-        return;
-      }
-      const pageType = ZBScanner.detectPageType();
-      const profileToken = ZBScanner.extractProfileTokenFromUrl();
-      const listType = pageType === 'followees' ? 'followees' : 'followers';
-      if (!profileToken || !['followers', 'followees'].includes(pageType)) {
-        sendResponse({ error: '请先打开用户的关注者或关注列表页面' });
-        return;
-      }
-      isBlocking = true;
-      (async () => {
-        const maxUsers = msg.maxUsers || 100;
-        safeSendMessage({
-          type: 'blockProgress',
-          current: 0,
-          total: 0,
-          name: listType === 'followers' ? '正在获取关注者...' : '正在获取关注的人...',
-          success: true,
-          reason: 'fetching',
-        });
-        const users = await ZhihuAPI.fetchAllUsers(listType, profileToken, maxUsers, (fetched, estimated) => {
-          safeSendMessage({
-            type: 'blockProgress',
-            current: 0,
-            total: 0,
-            name: `获取中 ${fetched}/${estimated || '?'}`,
-            success: true,
-            reason: 'fetching',
-          });
-        });
-        if (users.length === 0) {
-          isBlocking = false;
-          sendResponse({ error: '未获取到用户，可能是页面类型不支持或登录状态失效' });
-          return;
-        }
-        const result = await ZhihuAPI.batchBlock(users, (current, total, user, success, reason) => {
-          safeSendMessage({ type: 'blockProgress', current, total, name: user.name || user.urlToken, success, reason });
-        });
-        isBlocking = false;
-        sendResponse({ result, count: users.length, totalFetched: users.length, listType });
-      })().catch(e => {
-        isBlocking = false;
-        sendResponse({ error: e.message });
-      });
-      return true;
-    }
-
-    if (msg.action === 'blockVoters') {
-      if (isBlocking) {
-        sendResponse({ error: '正在拉黑中' });
-        return;
-      }
-      const answerId = msg.answerId || ZBScanner.extractAnswerIdFromPage();
-      if (!answerId) {
-        sendResponse({ error: '未找到回答 ID，请打开具体回答页，或先在问题页滚动到目标回答卡片' });
-        return;
-      }
-      isBlocking = true;
-      (async () => {
-        const maxUsers = msg.maxUsers || 100;
-        safeSendMessage({ type: 'blockProgress', current: 0, total: 0, name: '正在获取点赞者...', success: true, reason: 'fetching' });
-        const voters = await ZhihuAPI.fetchAllUsers('voters', answerId, maxUsers, (fetched, estimated) => {
-          safeSendMessage({ type: 'blockProgress', current: 0, total: 0, name: `获取中 ${fetched}/${estimated || '?'}`, success: true, reason: 'fetching' });
-        });
-        if (voters.length === 0) {
-          isBlocking = false;
-          sendResponse({ error: `未获取到点赞者（回答 ID：${answerId}）。可能是该回答没有公开赞同者，或知乎接口限制。` });
-          return;
-        }
-        const result = await ZhihuAPI.batchBlock(voters, (current, total, user, success, reason) => {
-          safeSendMessage({ type: 'blockProgress', current, total, name: user.name || user.urlToken, success, reason });
-        });
-        isBlocking = false;
-        sendResponse({ result, totalFetched: voters.length, answerId });
-      })().catch(e => {
-        isBlocking = false;
-        const statusText = e.status ? `，接口状态：${e.status}` : '';
-        sendResponse({ error: `获取回答点赞者失败（回答 ID：${answerId}${statusText}）：${e.message}` });
-      });
-      return true;
-    }
-
-    if (msg.action === 'getPageType') {
-      sendResponse({ type: ZBScanner.detectPageType() });
-    }
-
-    if (msg.action === 'getPageContext') {
-      sendResponse({
-        type: ZBScanner.detectPageType(),
-        profileToken: ZBScanner.extractProfileTokenFromUrl(),
-        answerId: ZBScanner.extractAnswerIdFromPage(),
-        answers: ZBScanner.extractAnswerIdsFromPage(),
-        comments: serializeComments(ZBScanner.extractCommentIds()),
-      });
-    }
-
-    if (msg.action === 'getAnswerId') {
-      sendResponse({ answerId: ZBScanner.extractAnswerIdFromPage() });
-    }
-
-    if (msg.action === 'getCommentIds') {
-      sendResponse({ comments: serializeComments(ZBScanner.extractCommentIds()) });
-    }
-  });
-
-  function serializeComments(comments) {
-    return comments.map(({ commentId, author, content }) => ({ commentId, author, content }));
-  }
-
-  // ── 全自动模式 ──────────────────────────────
-  async function initAutoMode() {
-    const rules = await ZBStorage.getRules();
-    if (rules.length === 0) return;
-
-    let scanTimer = null;
-    autoObserver = new MutationObserver(() => {
-      if (!contextValid) {
-        autoObserver.disconnect();
-        return;
-      }
-      if (scanTimer) clearTimeout(scanTimer);
-      scanTimer = setTimeout(autoScan, 800);
-      autoScanTimer = scanTimer;
-    });
-
-    autoObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-
-    autoScanTimer = setTimeout(autoScan, 1000);
-  }
-
-  async function autoScan() {
-    if (isBlocking || !contextValid) return;
-
+  async function flush() {
+    if (!valid || sending || !pending.size || !settings.autoMode) return;
+    sending = true;
+    const epoch = generation;
     try {
-      const matched = await ZBScanner.scan();
-      if (matched.length === 0) return;
-
-      isBlocking = true;
-      const result = await ZhihuAPI.batchBlock(matched, () => {});
-      autoBlockCount += result.blocked;
-
-      if (autoBlockCount > 0) {
-        safeSendMessage({ type: 'autoBlockUpdate', count: autoBlockCount });
+      const users = [...pending.values()].slice(0, 20), response = await send({ action: 'enqueueAuto', users, rulesSignature: JSON.stringify(rules) });
+      if (epoch !== generation) return;
+      for (const token of response.accepted || []) { pending.delete(token); accepted.add(token); }
+      if (response.error || response.stale || response.disabled) {
+        // API 或登录异常后停止自动提交，保留任务提示；由用户继续。
+        pending.clear(); return;
       }
-
-      isBlocking = false;
-    } catch (e) {
-      if (!isContextAlive()) {
-        invalidateContext();
-        console.log('[知乎拉黑] 扩展已更新，content script 停止运行');
-      } else {
-        console.error('[知乎拉黑] 自动扫描出错:', e);
+      if (response.busy && response.task?.status === 'paused') return;
+      if (pending.size) {
+        clearTimeout(retryTimer); retryTimer = setTimeout(flush, 2000);
       }
-      isBlocking = false;
+    } catch { /* 上下文失效已经停止观察。 */ }
+    finally { sending = false; if (epoch !== generation) flush(); }
+  }
+  async function scanDirty() {
+    clearTimeout(timer); clearTimeout(maxTimer); timer = null; maxTimer = null;
+    if (!valid || scanning || !rules.length || !settings.autoMode) return;
+    scanning = true;
+    const epoch = generation;
+    try {
+      const units = [...dirty]; dirty.clear();
+      // 大页面分块让出事件循环；只缓存内容指纹，节点移除后可被回收。
+      for (let offset = 0; offset < units.length && valid && epoch === generation; offset += 30) {
+        const changed = [];
+        for (const unit of units.slice(offset, offset + 30)) {
+          if (!unit.isConnected) continue;
+          const fingerprint = unit.textContent + '|' + unit.querySelector('a[href*="/people/"]')?.getAttribute('href');
+          if (fingerprints.get(unit) === fingerprint) continue;
+          fingerprints.set(unit, fingerprint); changed.push(unit);
+        }
+        const matched = ZBScanner.matchUsers(ZBScanner.extractUsers(changed), rules, settings.whitelist);
+        for (const user of matched) if (!accepted.has(user.urlToken)) pending.set(user.urlToken, {
+          urlToken: user.urlToken, name: user.name,
+          evidence: user.matchedRules.map(m => ({ keyword: m.rule.keyword, source: m.source, text: m.evidence })),
+        });
+        if (offset + 30 < units.length) await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      // 后台确认账号可能等待网络；页面扫描无需等待提交结果。
+      if (epoch === generation) flush();
+    } finally {
+      scanning = false;
+      if (dirty.size) schedule();
     }
   }
-
-  initAutoMode();
-
+  function schedule() {
+    if (!valid || !rules.length || !settings.autoMode) return;
+    clearTimeout(timer); timer = setTimeout(scanDirty, 500);
+    if (!maxTimer) maxTimer = setTimeout(scanDirty, 2000);
+  }
+  function mark(root) {
+    for (const unit of ZBScanner.collectUnits([root])) dirty.add(unit);
+  }
+  const observer = new MutationObserver(mutations => {
+    if (!chrome.runtime?.id) { stop(); return; }
+    for (const mutation of mutations) {
+      const target = mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
+      if (target) {
+        // 父容器新增一张卡片时不遍历它的所有旧卡片。
+        const owner = target.closest('.AnswerItem, .ArticleItem, .CommentItem, .CommentItemV2, [data-comment-id], .ContentItem, .MemberList-item, .ProfileHeader, .Post-Main, article');
+        if (owner) dirty.add(owner);
+      }
+      for (const node of mutation.addedNodes || []) if (node.nodeType === Node.ELEMENT_NODE) mark(node);
+    }
+    schedule();
+  });
+  async function reload() {
+    const epoch = ++generation;
+    observer.disconnect(); clearTimeout(timer); clearTimeout(maxTimer); clearTimeout(retryTimer);
+    pending.clear(); accepted.clear(); dirty.clear();
+    try {
+      const values = await Promise.all([ZBStorage.getRules(), ZBStorage.getSettings()]);
+      if (epoch !== generation || !valid) return;
+      [rules, settings] = values;
+      fingerprints = new WeakMap(); pending.clear(); accepted.clear(); dirty.clear();
+      observer.disconnect(); clearTimeout(timer); clearTimeout(maxTimer); clearTimeout(retryTimer);
+      if (!rules.length || !settings.autoMode) return;
+      mark(document); observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['href'] }); schedule();
+    } catch { stop(); }
+  }
+  function onChanged(changes, area) {
+    if (area === 'sync' && (changes.rules || changes.settings)) reload();
+    if (area === 'local' && changes.zbTask) {
+      const previous = changes.zbTask.oldValue, next = changes.zbTask.newValue;
+      if (['done', 'cancelled'].includes(next?.status) || next?.status === 'running' && previous?.status === 'paused') flush();
+    }
+  }
+  chrome.storage.onChanged.addListener(onChanged);
+  chrome.runtime.onMessage.addListener((message, sender, respond) => {
+    if (message.action === 'getPageContext') {
+      const answers = ZBScanner.extractAnswerIdsFromPage();
+      respond({ type: ZBScanner.detectPageType(), profileToken: ZBScanner.extractProfileTokenFromUrl(),
+        answerId: ZBScanner.extractAnswerIdFromUrl() || answers[0]?.answerId || null, answers });
+    }
+    if (message.type === 'taskUpdate' && message.task?.status === 'done') flush();
+  });
+  await reload();
 })();

@@ -1,356 +1,136 @@
-/**
- * 页面扫描器 — 页面类型检测、用户信息提取、关键词匹配
- */
+/** 按内容单元确定直接作者，排除嵌套评论的作者和正文。 */
 const ZBScanner = (() => {
-  // ── 页面类型检测 ────────────────────────────
+  const UNITS = '.AnswerItem, .ArticleItem, .CommentItem, .CommentItemV2, [data-comment-id], .ContentItem, .MemberList-item, .ProfileHeader, .Post-Main, article';
+  const BODIES = '.RichContent-inner, .AnswerItem-content, .ArticleItem-content, .Post-RichTextContainer, .CommentContent, .CommentItem-content, .CommentItemV2-content, [class*="RichText"]';
+  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
   function detectPageType() {
-    const path = location.pathname;
-
-    if (/^\/people\/[^/]+\/followers/.test(path)) return 'followers';
-    if (/^\/people\/[^/]+\/followees/.test(path)) return 'followees';
-    if (/^\/question\/\d+\/answer\/\d+/.test(path)) return 'answer';
-    if (/^\/question\/\d+/.test(path)) return 'question';
-    if (/^\/people\/[^/]+\/?$/.test(path)) return 'profile';
-    if (/^\/\d+/.test(path) && location.hostname.includes('zhuanlan')) return 'article';
-
-    // 通用：首页 feed、搜索结果等
+    const p = location.pathname;
+    if (/^\/people\/[^/]+\/followers\/?$/.test(p)) return 'followers';
+    if (/^\/people\/[^/]+\/followees\/?$/.test(p)) return 'followees';
+    if (/^\/(?:question\/\d+\/)?answer\/\d+/.test(p)) return 'answer';
+    if (/^\/question\/\d+/.test(p)) return 'question';
+    if (/^\/people\/[^/]+\/?$/.test(p)) return 'profile';
+    if (location.hostname === 'zhuanlan.zhihu.com' && /^\/p\/\d+/.test(p)) return 'article';
     return 'feed';
   }
-
-  /**
-   * 从 URL 提取用户的 url_token
-   */
-  function extractUrlTokenFromUrl(url) {
-    const m = url.match(/\/people\/([^/?#]+)/);
-    return m ? m[1] : null;
+  function extractUrlTokenFromUrl(value) {
+    try {
+      const url = new URL(value, location.href);
+      if (!/(^|\.)zhihu\.com$/.test(url.hostname)) return null;
+      return url.pathname.match(/^\/people\/([a-zA-Z0-9_-]+)(?:\/|$)/)?.[1] || null;
+    } catch { return null; }
   }
-
-  /**
-   * 从当前 URL 提取 answer_id
-   */
-  function extractAnswerIdFromUrl() {
-    const m = location.pathname.match(/\/answer\/(\d+)/);
-    return m ? m[1] : null;
+  const extractProfileTokenFromUrl = () => location.pathname.match(/^\/people\/([^/]+)/)?.[1] || null;
+  const extractAnswerIdFromUrl = () => location.pathname.match(/\/answer\/(\d+)/)?.[1] || null;
+  function metadataId(text) {
+    try {
+      const data = JSON.parse(text);
+      if (data?.type === 'answer' || data?.itemType === 'answer') return String(data.itemId || data.id || '');
+      if (data?.answerId || data?.answer_id) return String(data.answerId || data.answer_id);
+    } catch { /* 不明属性只接受明确的 answer URL。 */ }
+    return String(text || '').match(/\/answer\/(\d+)/)?.[1] || null;
   }
-
-  function extractAnswerIdFromPage() {
-    return extractAnswerIdFromUrl() || extractAnswerIdsFromPage()[0]?.answerId || null;
-  }
-
   function extractAnswerIdsFromPage() {
-    const answers = [];
-    const seen = new Set();
-
-    function addAnswer(answerId, sourceEl) {
-      if (!/^\d+$/.test(String(answerId || '')) || seen.has(answerId)) return;
-      seen.add(answerId);
-      const container = findAnswerContainer(sourceEl);
-      const author = cleanText(container?.querySelector?.('a[href*="/people/"]')?.textContent).slice(0, 24);
-      const excerpt = cleanText(container?.querySelector?.('.RichContent-inner, [class*="RichText"], [class*="ContentItem"]')?.textContent || container?.textContent).slice(0, 48);
-      answers.push({ answerId, author, excerpt });
+    const answers = new Map();
+    function add(id, element) {
+      if (!/^\d+$/.test(String(id || '')) || answers.has(String(id))) return;
+      const unit = element?.closest?.(UNITS) || element;
+      const user = unit ? extractUsers([unit])[0] : null;
+      answers.set(String(id), { answerId: String(id), author: user?.name || '', excerpt: clean(user?.context.answer).slice(0, 48) });
     }
-
-    const fromUrl = extractAnswerIdFromUrl();
-    if (fromUrl) addAnswer(fromUrl, document.body);
-
-    document.querySelectorAll([
-      'a[href*="/answer/"]',
-      '[data-zop]',
-      '[data-answer-id]',
-      '[data-answerid]',
-      '[data-id]',
-      '[itemid*="/answer/"]',
-      '[id^="answer-"]',
-      '[data-za-extra-module]',
-    ].join(', ')).forEach(el => {
-      addAnswer(extractAnswerIdFromText(el.getAttribute('href')), el);
-      addAnswer(el.getAttribute('data-answer-id'), el);
-      addAnswer(el.getAttribute('data-answerid'), el);
-      addAnswer(extractAnswerIdFromText(el.getAttribute('data-id')), el);
-      addAnswer(extractAnswerIdFromText(el.getAttribute('itemid')), el);
-      addAnswer(extractAnswerIdFromText(el.id), el);
-      addAnswer(extractAnswerIdFromText(el.getAttribute('data-zop')), el);
-      addAnswer(extractAnswerIdFromText(el.getAttribute('data-za-extra-module')), el);
+    add(extractAnswerIdFromUrl(), document.querySelector('.AnswerItem'));
+    document.querySelectorAll('a[href*="/answer/"], [data-answer-id], [data-answerid], [data-zop], [data-za-extra-module], .AnswerItem[data-id], [itemid*="/answer/"]').forEach(el => {
+      if (el.matches('a') && el.closest(BODIES)) return;
+      add(el.getAttribute('data-answer-id') || el.getAttribute('data-answerid'), el);
+      if (el.matches('.AnswerItem')) add(el.getAttribute('data-id'), el);
+      for (const key of ['href', 'itemid', 'data-zop', 'data-za-extra-module']) add(metadataId(el.getAttribute(key)), el);
     });
-
-    return answers;
+    return [...answers.values()];
   }
-
-  function findAnswerContainer(el) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) return document.body;
-    return el.closest('.AnswerItem, [class*="AnswerItem"], .ContentItem, [class*="ContentItem"]') || el;
-  }
-
-  function extractAnswerIdFromText(text) {
-    if (!text) return null;
-    const value = String(text);
-    const match = value.match(/\/answer\/(\d+)/)
-      || value.match(/answer[_-]?id["'=:\s]+(\d+)/i)
-      || value.match(/itemId["'=:\s]+(\d+)/i)
-      || value.match(/"type"\s*:\s*"answer"[\s\S]{0,120}?"id"\s*:\s*(\d+)/i)
-      || value.match(/"answer"[\s\S]{0,80}?"id"\s*:\s*(\d+)/i)
-      || value.match(/answer-(\d+)/i);
-    return match ? match[1] : null;
-  }
-
-  /**
-   * 从页面 DOM 提取当前页面上所有可见评论的信息
-   * @returns {Array<{commentId: string, author: string, content: string, element?: Element}>}
-   */
-  function extractCommentIds() {
-    const comments = [];
-    const seen = new Set();
-
-    collectCommentElements().forEach(el => {
-      const id = extractCommentIdFromElement(el);
-      if (!id || seen.has(id)) return;
-      seen.add(id);
-
-      const authorEl = el.querySelector([
-        '[class*="Author"] a[href*="/people/"]',
-        '.CommentItem-meta a[href*="/people/"]',
-        'a[href*="/people/"]',
-        '[class*="name"]',
-      ].join(', '));
-      const contentEl = el.querySelector([
-        '.CommentContent',
-        '[class*="CommentContent"]',
-        '[class*="content"]',
-        '[class*="Content"]',
-        'p',
-      ].join(', '));
-
-      comments.push({
-        commentId: id,
-        author: cleanText(authorEl?.textContent).slice(0, 20),
-        content: cleanText(contentEl?.textContent).slice(0, 40),
-        element: el,
-      });
-    });
-
-    return comments;
-  }
-
-  function collectCommentElements() {
-    const elements = new Set();
-
-    document.querySelectorAll([
-      '.CommentItem',
-      '[class*="CommentItem"]',
-      '[data-comment-id]',
-      '[data-commentid]',
-      '[data-id]',
-      '[id^="comment-"]',
-      '[id*="comment"]',
-      'a[href*="comment"]',
-    ].join(', ')).forEach(el => {
-      if (!extractCommentIdFromElement(el)) return;
-      const container = findCommentContainer(el);
-      if (container) {
-        elements.add(container);
+  const extractAnswerIdFromPage = () => extractAnswerIdFromUrl() || extractAnswerIdsFromPage()[0]?.answerId || null;
+  function collectUnits(roots = [document]) {
+    const units = new Set();
+    for (const root of roots) {
+      if (root.nodeType === Node.ELEMENT_NODE) {
+        const owner = root.closest(UNITS); if (owner) units.add(owner);
       }
-    });
-
-    return Array.from(elements);
-  }
-
-  function findCommentContainer(el) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
-    const known = el.closest('.CommentItem, [class*="CommentItem"], [class*="comment-item"], [class*="commentItem"]');
-    if (known) return known;
-
-    let current = el;
-    let fallback = el;
-    for (let i = 0; i < 7 && current; i++) {
-      const text = cleanText(current.textContent);
-      const hasAuthor = !!current.querySelector?.('a[href*="/people/"]');
-      const hasAction = hasCommentActionControls(current);
-      if (text.length >= 2 && text.length <= 3000 && hasAction) {
-        return current;
-      }
-      if (text.length >= 2 && text.length <= 2000 && hasAuthor) fallback = current;
-      current = current.parentElement;
+      root.querySelectorAll?.(UNITS).forEach(unit => units.add(unit));
     }
-
-    return fallback;
+    return units;
   }
-
-  function hasCommentActionControls(el) {
-    if (!el?.querySelectorAll) return false;
-    return Array.from(el.querySelectorAll('button, [role="button"], a, span')).some(node => {
-      const label = cleanText([
-        node.textContent,
-        node.getAttribute?.('aria-label'),
-        node.getAttribute?.('title'),
-      ].join(' '));
-      return /回复|喜爱|赞|like/i.test(label);
+  function ownNodes(unit, selector) {
+    return [...unit.querySelectorAll(selector)].filter(el => el.closest(UNITS) === unit);
+  }
+  function ownText(element, unit) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node !== unit && node.matches(UNITS + ', script, style')) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_SKIP;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
     });
+    const text = [];
+    while (walker.nextNode()) text.push(walker.currentNode.textContent);
+    return clean(text.join(' '));
   }
-
-  function extractCommentIdFromElement(el) {
-    const candidates = [
-      el.getAttribute('data-comment-id'),
-      el.getAttribute('data-commentid'),
-      el.getAttribute('data-id'),
-      extractCommentIdFromText(el.id),
-    ];
-
-    el.querySelectorAll?.('[data-comment-id], [data-commentid], [data-id], [id^="comment-"], a[href*="comment"]').forEach(child => {
-      candidates.push(
-        child.getAttribute('data-comment-id'),
-        child.getAttribute('data-commentid'),
-        child.getAttribute('data-id'),
-        extractCommentIdFromText(child.id),
-        extractCommentIdFromText(child.getAttribute('href') || '')
-      );
-    });
-
-    return candidates.find(isLikelyCommentId) || null;
+  function kind(unit) {
+    if (unit.matches('.CommentItem, .CommentItemV2, [data-comment-id]')) return 'comment';
+    if (unit.matches('.ArticleItem, .Post-Main, article') && (unit.matches('.ArticleItem') || detectPageType() === 'article')) return 'article';
+    if (unit.matches('.AnswerItem')) return 'answer';
+    try {
+      const type = JSON.parse(unit.getAttribute('data-zop') || '{}').type;
+      if (['answer', 'article'].includes(type)) return type;
+    } catch { /* 不按不明内容类型执行正文匹配。 */ }
+    return null;
   }
-
-  function extractCommentIdFromText(text) {
-    if (!text) return null;
-    const match = String(text).match(/(?:comment[_/-]?|comment_id=)(\d{4,})/i) || String(text).match(/(?:^|[^\d])(\d{6,})(?:[^\d]|$)/);
-    return match ? match[1] : null;
-  }
-
-  function isLikelyCommentId(value) {
-    return /^\d{4,}$/.test(String(value || ''));
-  }
-
-  function cleanText(text) {
-    return String(text || '').replace(/\s+/g, ' ').trim();
-  }
-
-  /**
-   * 从 URL 提取关注者/被关注者的 url_token
-   */
-  function extractProfileTokenFromUrl() {
-    const m = location.pathname.match(/\/people\/([^/]+)/);
-    return m ? m[1] : null;
-  }
-
-  // ── 用户信息提取 ────────────────────────────
-
-  /**
-   * 从 DOM 提取页面上所有可见用户的信息
-   * 返回: [{ urlToken, name, element, context: { bio, comment, answer, article } }]
-   */
-  function extractUsers() {
-    const usersMap = new Map(); // urlToken -> user info
-
-    // 1. 从所有用户链接提取 url_token 和用户名
-    const userLinks = document.querySelectorAll('a[href*="/people/"]');
-    userLinks.forEach(link => {
-      const urlToken = extractUrlTokenFromUrl(link.href);
-      if (!urlToken || urlToken === 'undefined') return;
-
-      // 找最近的卡片容器
-      const card = link.closest('.ContentItem, .List-item, .AnswerItem, .ArticleItem, .CommentItem, .MemberList-item, .UserLink-link') || link.parentElement;
-
-      if (!usersMap.has(urlToken)) {
-        usersMap.set(urlToken, {
-          urlToken,
-          name: link.textContent.trim(),
-          element: card,
-          context: { bio: '', comment: '', answer: '', article: '' },
-        });
+  function extractUsers(roots = [document]) {
+    const users = new Map();
+    const units = new Set();
+    for (const root of roots) {
+      if (root.matches?.(UNITS)) units.add(root);
+      else for (const unit of collectUnits([root])) units.add(unit);
+    }
+    for (const unit of units) {
+      const links = ownNodes(unit, 'a[href*="/people/"]').filter(link => !link.closest(BODIES));
+      const authors = '.AuthorInfo, .Post-Author, .CommentItem-meta, .CommentItemV2-meta, .UserLink';
+      const preferred = links.find(link => link.closest('.AuthorInfo, .Post-Author, .CommentItem-meta, .CommentItemV2-meta')) || links.find(link => link.closest('.UserLink')) || links[0];
+      const token = preferred ? extractUrlTokenFromUrl(preferred.href) : unit.matches('.ProfileHeader') ? extractProfileTokenFromUrl() : null;
+      if (!token || ['undefined', 'null'].includes(token)) continue;
+      if (!preferred?.closest(authors) && new Set(links.map(link => extractUrlTokenFromUrl(link.href)).filter(Boolean)).size > 1) continue;
+      const user = users.get(token) || { urlToken: token, name: clean(preferred?.textContent), context: { bio: '', comment: '', answer: '', article: '' }, contents: [] };
+      if (!user.name) user.name = clean(preferred?.textContent);
+      const source = kind(unit), bodies = ownNodes(unit, BODIES);
+      const topBodies = bodies.filter(el => !bodies.some(parent => parent !== el && parent.contains(el)));
+      const body = topBodies.map(el => ownText(el, unit)).filter(Boolean).join('\n');
+      const bio = ownNodes(unit, '.Bio, .zhihu-signature, .MemberItem-headline, .ProfileHeader-headline, [class*="Signature"]').map(el => ownText(el, unit)).join('\n');
+      for (const [field, text] of [['bio', bio], [source, body]]) {
+        if (!field || !text) continue;
+        user.contents.push({ source: field, text }); user.context[field] += (user.context[field] ? '\n' : '') + text;
       }
-
-      const user = usersMap.get(urlToken);
-      // 更新名字（优先用更完整的名字）
-      const linkText = link.textContent.trim();
-      if (linkText && linkText.length > user.name.length) {
-        user.name = linkText;
-      }
-    });
-
-    // 2. 提取各类内容用于关键词匹配
-    usersMap.forEach((user, urlToken) => {
-      const card = user.element;
-      if (!card) return;
-
-      // 签名/bio — 从用户卡片区域
-      const bioEl = card.querySelector(
-        '.Bio, .zhihu-signature, .UserHead-badge, .MemberItem-headline, [class*="headline"], [class*="Signature"]'
-      );
-      if (bioEl) user.context.bio = bioEl.textContent.trim();
-
-      // 回答内容
-      const answerEl = card.querySelector('.RichContent-inner, .AnswerItem-content, [class*="RichText"]');
-      if (answerEl) user.context.answer = answerEl.textContent.trim().slice(0, 2000);
-
-      // 文章内容
-      const articleEl = card.querySelector('.ArticleItem-content, .Post-RichTextContainer, .RichContent-inner');
-      if (articleEl && !user.context.answer) {
-        user.context.article = articleEl.textContent.trim().slice(0, 2000);
-      }
-
-      // 评论内容
-      const commentEl = card.querySelector('.CommentContent, .CommentItem-content, [class*="comment"] [class*="content"]');
-      if (commentEl) user.context.comment = commentEl.textContent.trim().slice(0, 1000);
-    });
-
-    return Array.from(usersMap.values());
+      users.set(token, user);
+    }
+    return [...users.values()];
   }
-
-  // ── 关键词匹配 ─────────────────────────────
-
-  const SOURCE_FIELD_MAP = {
-    bio: 'bio',
-    comment: 'comment',
-    answer: 'answer',
-    article: 'article',
-  };
-
-  /**
-   * 根据规则匹配用户
-   * @param {Array} users  extractUsers() 的返回值
-   * @param {Array} rules  [{ keyword, sources }]
-   * @returns {Array} 匹配的用户，附带 matchedRules
-   */
-  function matchUsers(users, rules) {
-    if (!rules.length) return [];
-
+  function matchUsers(users, rules, whitelist = []) {
+    const allowed = new Set(whitelist);
     return users.filter(user => {
-      const matched = [];
+      if (allowed.has(user.urlToken)) return false;
+      const matches = [], contents = user.contents || Object.entries(user.context).map(([source, text]) => ({ source, text }));
       for (const rule of rules) {
-        const kw = rule.keyword.toLowerCase();
-        for (const source of rule.sources) {
-          const field = user.context[SOURCE_FIELD_MAP[source]] || '';
-          if (field.toLowerCase().includes(kw)) {
-            matched.push({ rule, source });
-            break; // 一个规则只匹配一次
-          }
+        const keyword = clean(rule.keyword).toLowerCase();
+        if (!keyword || !Array.isArray(rule.sources)) continue;
+        for (const { source, text } of contents) {
+          if (!rule.sources.includes(source)) continue;
+          const lower = text.toLowerCase(), index = lower.indexOf(keyword);
+          if (index < 0 || (rule.exclude || []).some(word => word && lower.includes(word.toLowerCase()))) continue;
+          matches.push({ rule, source, evidence: text.slice(Math.max(0, index - 40), index + keyword.length + 70) }); break;
         }
       }
-      if (matched.length > 0) {
-        user.matchedRules = matched;
-        return true;
-      }
-      return false;
+      user.matchedRules = matches; return matches.length > 0;
     });
   }
-
-  /**
-   * 一键扫描：提取 + 匹配
-   */
-  async function scan() {
-    const users = extractUsers();
-    const rules = await ZBStorage.getRules();
-    return matchUsers(users, rules);
-  }
-
-  return {
-    detectPageType,
-    extractUrlTokenFromUrl,
-    extractAnswerIdFromUrl,
-    extractAnswerIdFromPage,
-    extractAnswerIdsFromPage,
-    extractCommentIds,
-    extractProfileTokenFromUrl,
-    extractUsers,
-    matchUsers,
-    scan,
-  };
+  return { detectPageType, extractUrlTokenFromUrl, extractProfileTokenFromUrl, extractAnswerIdFromUrl,
+    extractAnswerIdFromPage, extractAnswerIdsFromPage, collectUnits, extractUsers, matchUsers };
 })();

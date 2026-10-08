@@ -1,0 +1,12 @@
+{
+  "name": "zhihu-blocker",
+  "version": "1.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/core.test.cjs",
+    "test:browser": "node tests/browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

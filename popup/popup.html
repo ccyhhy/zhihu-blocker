@@ -2,95 +2,69 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>知乎批量拉黑</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="header">
-    <div class="brand-mark">ZB</div>
-    <div class="brand-copy">
-      <h1>知乎批量拉黑</h1>
-      <div class="auto-status">规则命中后自动处理，无需手动扫描</div>
-    </div>
-    <button class="header-settings" id="headerSettingsBtn" type="button" title="打开设置">设置</button>
-  </div>
-
-  <!-- 操作区：根据当前页面类型动态显示 -->
-  <div class="section" id="actionSection">
-    <h2>操作</h2>
-    <div class="action-meta">
-      <div id="pageStatus" class="page-status">正在识别当前页面...</div>
-      <button class="btn btn-secondary btn-mini" id="refreshPageBtn" type="button">重新识别</button>
-    </div>
-    <div id="actionContent">
+  <header class="header">
+    <div><h1>知乎批量拉黑</h1><p>按规则筛选，按名单处理</p></div>
+    <div class="header-actions"><span id="speedMode" class="badge">自动匹配</span><button id="headerSettingsBtn" class="btn btn-quiet" type="button">设置</button></div>
+  </header>
+  <main>
+    <section class="section" id="actionSection">
+      <div class="section-heading"><h2>当前页面</h2><button class="btn btn-quiet" id="refreshPageBtn" type="button">重新识别</button></div>
+      <div id="pageStatus" class="page-status">正在识别当前页面…</div>
       <div id="pageSpecialActions"></div>
-      <div id="actionHint" class="action-hint"></div>
-    </div>
-    <div class="progress-wrap" id="actionProgress" style="display:none">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <span class="progress-text" id="progressText"></span>
-    </div>
-  </div>
-
-  <!-- 关键词规则 -->
-  <div class="section">
-    <h2>关键词规则</h2>
-    <div class="add-rule">
-      <input type="text" id="keywordInput" placeholder="输入关键词...">
-      <div class="source-checks" aria-label="匹配来源">
-        <label><input type="checkbox" name="source" value="bio"> <span>签名</span></label>
-        <label><input type="checkbox" name="source" value="comment"> <span>评论</span></label>
-        <label><input type="checkbox" name="source" value="answer"> <span>回答</span></label>
-        <label><input type="checkbox" name="source" value="article"> <span>文章</span></label>
-      </div>
-      <button id="addRuleBtn" class="btn btn-primary">添加规则</button>
-    </div>
-    <div id="ruleList" class="rule-list"></div>
-    <div id="noRules" class="empty-hint">暂无规则，添加关键词开始使用</div>
-  </div>
-
-  <!-- 统计 -->
-  <div class="section">
-    <h2>今日统计</h2>
-    <div class="stats">
-      <div class="stat-item">
-        <span class="stat-num" id="dailyCount">0</span>
-        <span class="stat-label">今日已拉黑</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-num" id="speedMode">极速</span>
-        <span class="stat-label">当前模式</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-num" id="totalBlocked">0</span>
-        <span class="stat-label">历史总计</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- 设置 -->
-  <div class="section collapsible">
-    <h2 class="section-toggle" id="settingsToggle">设置 <span class="arrow">&#9654;</span></h2>
-    <div class="section-body" id="settingsBody" style="display:none">
-      <div class="setting-row">
-        <label>拉黑间隔 (秒)</label>
-        <div class="interval-inputs">
-          <input type="number" id="intervalMin" min="0" max="30" step="0.1" value="0">
-          <span>~</span>
-          <input type="number" id="intervalMax" min="0" max="30" step="0.1" value="0">
+      <p id="actionHint" class="action-hint" role="status" aria-live="polite"></p>
+      <div class="progress-wrap" id="actionProgress" style="display:none" aria-live="polite">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <span class="progress-text" id="progressText"></span>
+        <div class="task-controls">
+          <button id="taskToggleBtn" class="btn btn-secondary" type="button" hidden>暂停</button>
+          <button id="taskEndBtn" class="btn btn-quiet" type="button" hidden>结束任务</button>
         </div>
       </div>
-      <div class="setting-row">
-        <label>翻页间隔 (秒)</label>
-        <input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0">
+      <details class="task-evidence" hidden><summary>查看命中内容</summary><div id="taskEvidence"></div></details>
+    </section>
+    <section class="section">
+      <div class="section-heading"><h2>关键词规则</h2><span class="muted" id="ruleCount"></span></div>
+      <div class="add-rule">
+        <label class="sr-only" for="keywordInput">关键词</label>
+        <input type="text" id="keywordInput" placeholder="输入要屏蔽的关键词" maxlength="120">
+        <div class="source-checks" aria-label="匹配来源">
+          <label><input type="checkbox" name="source" value="bio"><span>签名</span></label>
+          <label><input type="checkbox" name="source" value="comment"><span>评论</span></label>
+          <label><input type="checkbox" name="source" value="answer"><span>回答</span></label>
+          <label><input type="checkbox" name="source" value="article"><span>文章</span></label>
+        </div>
+        <details class="exclude-options"><summary>排除词（可选）</summary><label class="sr-only" for="excludeInput">排除词</label><input type="text" id="excludeInput" placeholder="多个词用逗号分隔"><p class="muted">同一条内容含排除词时，不按这条规则处理。</p></details>
+        <button id="addRuleBtn" class="btn btn-primary btn-full" type="button">添加规则</button>
       </div>
-      <div class="setting-row">
-        <label>并发拉黑数</label>
-        <input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5">
+      <div id="ruleList" class="rule-list"></div>
+      <div id="noRules" class="empty-hint">暂无规则。添加后会匹配已加载的内容。</div>
+    </section>
+    <section class="section stats-section">
+      <div class="stats">
+        <div class="stat-item"><span class="stat-num" id="dailyCount">—</span><span class="stat-label">今日已拉黑</span></div>
+        <div class="stat-item"><span class="stat-num" id="totalBlocked">—</span><span class="stat-label">当前账号累计</span></div>
       </div>
-      <button id="saveSettingsBtn" class="btn btn-secondary btn-full">保存设置</button>
-    </div>
-  </div>
-
+      <p id="accountHint" class="account-hint"></p>
+    </section>
+    <section class="section settings-section">
+      <button class="section-toggle" id="settingsToggle" type="button" aria-expanded="false" aria-controls="settingsBody">设置 <span class="arrow" aria-hidden="true">›</span></button>
+      <div class="section-body" id="settingsBody" style="display:none">
+        <div class="setting-row"><label for="autoModeInput">自动匹配拉黑</label><input type="checkbox" id="autoModeInput" checked></div>
+        <div class="setting-row"><span id="intervalLabel">拉黑间隔（秒）</span><div class="interval-inputs"><input type="number" id="intervalMin" aria-label="最小拉黑间隔" min="0" max="30" step="0.1" value="0"><span>至</span><input type="number" id="intervalMax" aria-label="最大拉黑间隔" min="0" max="30" step="0.1" value="0"></div></div>
+        <div class="setting-row"><label for="pageIntervalInput">翻页间隔（秒）</label><input type="number" id="pageIntervalInput" min="0" max="10" step="0.1" value="0"></div>
+        <div class="setting-row"><label for="blockConcurrencyInput">并发拉黑数</label><input type="number" id="blockConcurrencyInput" min="1" max="20" step="1" value="5"></div>
+        <p class="muted">间隔大于 0 时逐个处理；接口报错会暂停任务。</p>
+        <label for="whitelistInput" class="field-label">白名单</label>
+        <textarea id="whitelistInput" rows="3" placeholder="知乎主页地址或用户标识，每行一个"></textarea>
+        <button id="saveSettingsBtn" class="btn btn-secondary btn-full" type="button">保存设置</button>
+      </div>
+    </section>
+  </main>
   <script src="../lib/storage.js"></script>
   <script src="popup.js"></script>
 </body>
