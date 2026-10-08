@@ -1,355 +1,169 @@
-/**
- * Popup 脚本 — 所有操作通过 background 转发到页面脚本
- */
 document.addEventListener('DOMContentLoaded', async () => {
-  // ── 元素引用 ────────────────────────────────
-  const keywordInput = document.getElementById('keywordInput');
-  const addRuleBtn = document.getElementById('addRuleBtn');
-  const ruleList = document.getElementById('ruleList');
-  const noRules = document.getElementById('noRules');
-  const dailyCountEl = document.getElementById('dailyCount');
-  const speedModeEl = document.getElementById('speedMode');
-  const totalBlockedEl = document.getElementById('totalBlocked');
-  const specialActions = document.getElementById('pageSpecialActions');
-  const actionProgress = document.getElementById('actionProgress');
-  const progressFill = document.getElementById('progressFill');
-  const progressText = document.getElementById('progressText');
-  const pageStatus = document.getElementById('pageStatus');
-  const actionHint = document.getElementById('actionHint');
-  const refreshPageBtn = document.getElementById('refreshPageBtn');
-  const headerSettingsBtn = document.getElementById('headerSettingsBtn');
-  const sourceCheckboxes = Array.from(document.querySelectorAll('input[name="source"]'));
+  const $ = id => document.getElementById(id);
 
-  const SOURCE_LABELS = { bio: '签名', comment: '评论', answer: '回答', article: '文章' };
-  const PAGE_TYPE_LABELS = {
-    feed: '知乎普通页面',
-    answer: '回答页面',
-    question: '问题页面',
-    article: '文章页面',
-    followers: '粉丝页面',
-    followees: '关注列表页面',
-    profile: '个人主页',
+  const pageNames = {feed:'知乎普通页面',answer:'回答页面',question:'问题页面',article:'文章页面',profile:'用户页面'};
+  let task = null, settings = {}, starting = false, retryTimer;
+  const hiddenUsers = new Map(); let hiddenShown = 100;
+  function node(tag, value, style) {
+    const element = document.createElement(tag); element.textContent = value;
+    if (style) element.className = style; return element;
+  }
+  function send(message) {
+    return new Promise((resolve, reject) => chrome.runtime.sendMessage({target:'background', ...message}, response => {
+      const error = chrome.runtime.lastError;
+      if (error || response?.error) reject(new Error(error?.message || response.error)); else resolve(response || {});
+    }));
+  }
+  const error = e => {
+    const text = e.message || String(e); $('actionHint').classList.add('error'); $('actionHint').textContent = text;
   };
-  let isOperating = false;
-  let currentPageType = null;
-  let lastProgressPercent = 0;
-  let currentAnswerId = null;
-
-  async function saveRuleSourceDefaults() {
-    const settings = await ZBStorage.getSettings();
-    settings.ruleSourceDefaults = sourceCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
-    await ZBStorage.saveSettings(settings);
-  }
-
-  function applyRuleSourceDefaults(settings) {
-    const defaults = Array.isArray(settings.ruleSourceDefaults) && settings.ruleSourceDefaults.length
-      ? settings.ruleSourceDefaults
-      : ['bio', 'comment', 'answer'];
-    sourceCheckboxes.forEach(cb => {
-      cb.checked = defaults.includes(cb.value);
-    });
-  }
-
-  async function sendToBackground(msg) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ target: 'background', ...msg }, resp => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message || '插件通信失败'));
-        } else {
-          if (resp?.error) {
-            reject(new Error(resp.error));
-            return;
-          }
-          resolve(resp);
-        }
-      });
-    });
-  }
-
-  // ── 加载状态 ────────────────────────────────
-  async function refresh() {
-    const rules = await ZBStorage.getRules();
-    const settings = await ZBStorage.getSettings();
-    const dailyCount = await ZBStorage.getDailyCount();
-    const blocked = await ZBStorage.getBlockedSet();
-
-    if (!settings.autoMode) {
-      settings.autoMode = true;
-      await ZBStorage.saveSettings(settings);
+  function renderTask(value) {
+    task = value;
+    clearTimeout(retryTimer);
+    const active = task && ['running','paused'].includes(task.status);
+    $('taskToggleBtn').hidden = !active; $('taskEndBtn').hidden = !active;
+    if (task) {
+      $('actionProgress').style.display = 'flex';
+      const status = {running:'处理中',paused:'已暂停',done:'完成',cancelled:'已结束'}[task.status];
+      const source = task.type === 'voters' ? '回答 ' + task.target + ' 的赞同者' : task.type === 'followers' ? task.target + ' 的粉丝' : '所选用户';
+      $('progressText').textContent = status + ' · ' + source + ' · 已读取 ' + task.fetched + (task.maxUsers ? ' / ' + task.maxUsers : '（不限人数）') + '，成功 ' + task.blocked + '，跳过 ' + task.skipped + '，失败 ' + task.failed +
+        (task.unknown ? '，待核对 ' + task.unknown : '') + (task.remaining ? '，未处理 ' + task.remaining : '') + (task.error ? '。' + task.error : '');
+      const pct = task.status === 'done' ? 100 : task.maxUsers ? Math.min(99, Math.round((task.blocked + task.skipped + task.failed + task.unknown) / task.maxUsers * 100)) : 35;
+      $('progressFill').classList.toggle('indeterminate',task.status === 'running' && !task.maxUsers);
+      $('progressFill').style.width = pct + '%';
+      $('taskToggleBtn').textContent = task.status === 'running' ? '暂停' : '继续';
+      $('taskToggleBtn').disabled = task.status === 'paused' && task.retryAt > Date.now();
+      if ($('taskToggleBtn').disabled) retryTimer = setTimeout(() => renderTask(task), Math.min(2147483647, task.retryAt - Date.now() + 100));
+      $('taskEvidence').replaceChildren();
+      for (const e of task.evidence || []) $('taskEvidence').appendChild(node('div', e.name + '：' + e.text, 'evidence-item'));
+      for (const user of task.uncertainUsers || []) {
+        const row = node('div','待核对：','evidence-item'), link = node('a',user.name);
+        const token = ZBStorage.tokenFrom(user.urlToken); if (!token) continue;
+        link.href = 'https://www.zhihu.com/people/' + encodeURIComponent(token); link.target = '_blank'; link.rel = 'noopener noreferrer';
+        row.appendChild(link); $('taskEvidence').appendChild(row);
+      }
+      const details = document.querySelector('.task-evidence');
+      details.hidden = !task.evidence?.length && !task.uncertainUsers?.length;
+      details.querySelector('summary').textContent = task.uncertainUsers?.length ? '查看命中及待核对用户' : '查看命中内容';
     }
-
-    renderRules(rules);
-    applyRuleSourceDefaults(settings);
-    dailyCountEl.textContent = dailyCount;
-    speedModeEl.textContent = settings.blockIntervalMin === 0 && settings.blockIntervalMax === 0 ? '极速' : '限速';
-    totalBlockedEl.textContent = Object.keys(blocked).length;
-
-    document.getElementById('intervalMin').value = settings.blockIntervalMin / 1000;
-    document.getElementById('intervalMax').value = settings.blockIntervalMax / 1000;
-    document.getElementById('pageIntervalInput').value = settings.pageInterval / 1000;
-    document.getElementById('blockConcurrencyInput').value = settings.blockConcurrency || 5;
-
-    // 检测当前页面类型，显示对应操作
-    await detectPageActions();
+    document.querySelectorAll('[data-start-task]').forEach(button => { button.disabled = !!(active || starting); });
   }
-
-  // ── 页面类型检测 + 动态操作按钮 ─────────────
-  async function detectPageActions() {
-    const rules = await ZBStorage.getRules();
+  function renderStats(stats) {
+    $('dailyCount').textContent = stats?.daily ?? '—'; $('totalBlocked').textContent = stats?.total ?? '—';
+    $('accountHint').textContent = stats ? '当前账号：' + stats.account + (stats.legacy ? '。旧版全局记录已保留，不计入此账号统计。' : '') : '账号尚未确认，请检查知乎登录状态。';
+  }
+  async function refreshSettings(apply = false) {
+    settings = await ZBStorage.getSettings();
+    $('speedMode').textContent = settings.blockIntervalMax > 0 ? '逐个 · 有间隔' : '并发 ' + settings.blockConcurrency + ' · 无间隔';
+    if (apply) {
+      $('intervalMin').value = settings.blockIntervalMin / 1000; $('intervalMax').value = settings.blockIntervalMax / 1000;
+      $('blockConcurrencyInput').value = settings.blockConcurrency; $('whitelistInput').value = settings.whitelist.join('\n');
+    }
+  }
+  function renderHidden(users) {
+    if (users) { hiddenUsers.clear(); for (const user of users) hiddenUsers.set(user.urlToken,user); }
+    $('hiddenCount').textContent = hiddenUsers.size + ' 人';
+    if (!$('hiddenDetails').open) return;
+    $('hiddenList').replaceChildren();
+    for (const user of [...hiddenUsers.values()].slice(0,hiddenShown)) {
+      const row = node('div','','rule-item'), link = node('a',user.name || user.urlToken), restore = node('button','恢复显示','btn btn-quiet');
+      link.href = 'https://www.zhihu.com/people/' + encodeURIComponent(user.urlToken); link.target = '_blank'; link.rel = 'noopener noreferrer';
+      restore.onclick = async () => { restore.disabled = true; try { await send({action:'unhideUser',urlToken:user.urlToken}); hiddenUsers.delete(user.urlToken); renderHidden(); } catch (e) { error(e);restore.disabled=false; } };
+      row.append(link,restore); $('hiddenList').appendChild(row);
+    }
+    if (hiddenUsers.size > hiddenShown) {
+      const more=node('button','显示更多','btn btn-quiet');more.onclick=()=>{hiddenShown+=100;renderHidden();};$('hiddenList').appendChild(more);
+    }
+    if (!hiddenUsers.size) $('hiddenList').appendChild(node('p','暂未在本机屏蔽用户。','muted'));
+  }
+  $('hiddenDetails').ontoggle = () => renderHidden();
+  async function start(action,answerId,profileToken) {
+    if (starting || task && ['running','paused'].includes(task.status)) return;
+    const maxUsers = Number($('maxUsersInput').value || 0);
+    if (!Number.isSafeInteger(maxUsers) || maxUsers < 0) { error(new Error('处理人数请填写正整数，留空或 0 表示全部')); return; }
+    starting = true; renderTask(task);
+    $('actionHint').classList.remove('error'); $('actionHint').textContent = '正在启动批量拉黑…';
     try {
-      const resp = await sendToBackground({ action: 'getPageContext' });
-      const type = resp.type;
-      const answers = Array.isArray(resp.answers) ? resp.answers : [];
-      currentPageType = type;
-      currentAnswerId = resp.answerId || answers[0]?.answerId || null;
-
-      specialActions.innerHTML = '';
-      actionHint.textContent = '';
-      pageStatus.textContent = `当前页面：${PAGE_TYPE_LABELS[type] || '知乎页面'}`;
-
-      const hints = [];
-
-      if (type === 'followers' || type === 'followees') {
-        const label = type === 'followers' ? '关注者' : '关注的人';
-        const wrap = document.createElement('div');
-        wrap.className = 'voter-controls';
-        wrap.innerHTML = `
-          <label>最多 <input type="number" id="followMax" value="100" min="1" max="2000"> 人</label>
-          <button class="btn btn-danger" id="blockFollowListBtn">拉黑${label}</button>
-        `;
-        specialActions.appendChild(wrap);
-        document.getElementById('blockFollowListBtn').onclick = () => blockFollowers();
-        hints.push(`${label}会通过接口分页获取，不再受当前页面已经滚动加载多少人的限制。`);
-      }
-
-      if (currentAnswerId) {
-        // 回答点赞者
-        const wrap = document.createElement('div');
-        wrap.className = 'voter-controls';
-        const answerPicker = answers.length > 1
-          ? `<select id="answerPicker" title="选择当前页面识别到的回答">${answers.map(answer => `<option value="${escapeHtml(answer.answerId)}">${escapeHtml(formatAnswerOption(answer))}</option>`).join('')}</select>`
-          : `<span class="answer-id-pill">回答 ${escapeHtml(currentAnswerId)}</span>`;
-        wrap.innerHTML = `
-          <label class="voter-limit">最多 <input type="number" id="voterMax" value="100" min="1" max="2000"> 人</label>
-          ${answerPicker}
-          <button class="btn btn-danger" id="blockVotersBtn">拉黑该回答赞同者</button>
-        `;
-        specialActions.appendChild(wrap);
-        const picker = document.getElementById('answerPicker');
-        if (picker) {
-          picker.value = currentAnswerId;
-          picker.onchange = () => { currentAnswerId = picker.value; };
-        }
-        document.getElementById('blockVotersBtn').onclick = () => blockVoters();
-        hints.push(`已识别到 ${answers.length || 1} 个可见回答，可直接拉黑所选回答的赞同者。首页信息流建议先滚动到目标回答后点「重新识别」。`);
-      } else if (type === 'feed' || type === 'question') {
-        hints.push('当前可见区域还没识别到回答 ID。请先滚动到目标回答卡片，再点「重新识别」。');
-      }
-
-      // 评论喜爱者列表目前没有确认可用接口，仅显示诊断提示。
-      if (type === 'answer' || type === 'question' || type === 'feed' || type === 'article') {
-        const comments = resp.comments || [];
-        if (comments.length > 0) {
-          hints.push(`已识别到 ${comments.length} 条当前可见评论，但知乎没有确认开放评论喜爱者名单接口，暂不提供拉黑评论喜爱者。`);
-        } else {
-          hints.push('评论喜爱者功能暂不可用：目前只看到喜爱数量，没有可稳定获取喜爱者名单的接口。');
-        }
-      }
-
-      if (rules.length > 0) {
-        if (type === 'feed' || type === 'answer' || type === 'question' || type === 'article' || type === 'profile') {
-          hints.unshift(`当前已启用 ${rules.length} 条关键词规则，会自动扫描当前已加载内容。`);
-        }
-      } else {
-        hints.unshift('还没有关键词规则，添加后会自动扫描当前已加载内容。');
-      }
-
-      if (specialActions.innerHTML === '' && rules.length === 0) {
-        specialActions.innerHTML = '<div class="empty-hint empty-hint-left">这个页面暂时没有可直接执行的动作。</div>';
-      }
-
-      actionHint.textContent = hints.join(' ');
-    } catch (e) {
-      // 不在知乎页面或 content script 未加载
-      currentPageType = null;
-      pageStatus.textContent = '当前不是可用的知乎页面';
-      actionHint.textContent = '请先打开知乎页面。如果页面刚打开，刷新一下知乎页面后再试。';
-      specialActions.innerHTML = '<div class="empty-hint">请打开知乎页面使用</div>';
-    }
+      const response = await send({action,answerId,profileToken,maxUsers});
+      if (response.busy) throw new Error('已有任务，请继续或结束该任务');
+      renderTask(response.task);
+      $('actionHint').textContent = '已开始逐页拉黑并屏蔽，进度自动保存；可随时暂停或结束。';
+    } catch (e) { error(e); } finally { starting = false; renderTask(task); }
   }
-
-  // ── 拉黑关注者/粉丝 ─────────────────────────
-  async function blockFollowers() {
-    if (isOperating) return;
-    isOperating = true;
-    lastProgressPercent = 0;
-
+  function answerControl(answers) {
+    const wrap = node('div','','voter-controls'), picker = document.createElement('select'); picker.setAttribute('aria-label','选择回答');
+    for (const answer of answers) {
+      const option = node('option',(answer.author ? answer.author + '：' : '') + (answer.excerpt || '回答 ' + answer.answerId));
+      option.value = answer.answerId; picker.appendChild(option);
+    }
+    const button = node('button','拉黑回答赞同者','btn btn-danger'); button.dataset.startTask = 'voters';
+    button.onclick = () => start('blockAnswerVoters',picker.value);
+    wrap.append(picker,button); $('pageSpecialActions').appendChild(wrap);
+  }
+  async function detectPage() {
     try {
-      const label = currentPageType === 'followers' ? '粉丝' : '关注的人';
-      const maxUsers = parseInt(document.getElementById('followMax')?.value) || 100;
-      showProgress(`正在获取${label}...`, null);
-      const resp = await sendToBackground({ action: 'blockFollowList', maxUsers });
-      const r = resp.result;
-      showProgress(`完成！获取 ${resp.totalFetched || resp.count || 0} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '100%');
-      refresh();
-    } catch (e) {
-      showProgress('出错：' + e.message, '100%');
-    }
-
-    isOperating = false;
+      const context = await send({action:'getPageContext'});
+      $('pageStatus').textContent = '当前页面：' + (pageNames[context.type] || '知乎页面');
+      $('pageSpecialActions').replaceChildren();
+      if (context.answers?.length) answerControl(context.answers);
+      else $('pageSpecialActions').appendChild(node('p','打开回答页面，可批量拉黑该回答的赞同者。','muted'));
+      const wrap = node('div','','voter-controls'), input = document.createElement('input'), label = node('label','某人的粉丝');
+      input.type = 'text'; input.placeholder = '填写知乎用户主页地址'; input.setAttribute('aria-label','拉黑粉丝的用户主页');
+      input.value = context.profileToken ? 'https://www.zhihu.com/people/' + context.profileToken : ''; input.style.width = '100%';
+      const button = node('button','拉黑这个人的粉丝','btn btn-danger btn-full'); button.dataset.startTask = 'followers';
+      button.onclick = () => start('blockFollowers',null,ZBStorage.tokenFrom(input.value));
+      wrap.append(label,input,button); $('pageSpecialActions').appendChild(wrap);
+      $('actionHint').classList.remove('error'); $('actionHint').textContent = '点击按钮立即开始，自动读取下一页；粉丝是关注这个人的账号。';
+      renderTask(task);
+    } catch (e) { $('pageStatus').textContent = '页面暂不可用'; $('pageSpecialActions').replaceChildren(); error(e); }
   }
-
-  // ── 拉黑点赞者 ──────────────────────────────
-  async function blockVoters() {
-    if (isOperating) return;
-    isOperating = true;
-    lastProgressPercent = 0;
-
-    const maxUsers = parseInt(document.getElementById('voterMax')?.value) || 100;
-
+  const openSettings = () => { $('settingsBody').style.display = 'block'; $('settingsToggle').classList.add('open'); $('settingsToggle').setAttribute('aria-expanded','true'); };
+  $('settingsToggle').onclick = () => {
+    if ($('settingsBody').style.display === 'none') openSettings();
+    else { $('settingsBody').style.display = 'none'; $('settingsToggle').classList.remove('open'); $('settingsToggle').setAttribute('aria-expanded','false'); }
+  };
+  $('headerSettingsBtn').onclick = () => { openSettings(); $('settingsToggle').scrollIntoView({block:'start'}); };
+  $('saveSettingsBtn').onclick = async () => {
     try {
-      showProgress('正在获取点赞者...', null);
-      const resp = await sendToBackground({ action: 'blockAnswerVoters', maxUsers, answerId: currentAnswerId });
-      if (resp.error) {
-        showProgress('出错：' + resp.error, '100%');
-      } else {
-        const r = resp.result;
-        showProgress(`完成！获取 ${resp.totalFetched} 人，拉黑 ${r.blocked}，跳过 ${r.skipped}，失败 ${r.failed}`, '100%');
-      }
-      refresh();
-    } catch (e) {
-      showProgress('出错：' + e.message, '100%');
-    }
-
-    isOperating = false;
+      const whitelist = ZBStorage.words($('whitelistInput').value).map(ZBStorage.tokenFrom);
+      if (whitelist.some(token => !token)) throw new Error('白名单请填知乎主页地址或 url_token，每行一个');
+      const saved = await ZBStorage.getSettings();
+      const bounded = (id,max) => Math.max(0,Math.min(max,Number($(id).value) || 0));
+      saved.autoMode = false;
+      saved.blockIntervalMin = bounded('intervalMin',30) * 1000;
+      saved.blockIntervalMax = Math.max(saved.blockIntervalMin,bounded('intervalMax',30) * 1000);
+      saved.blockConcurrency = Math.max(1,Math.floor(bounded('blockConcurrencyInput',20)) || 5);
+      saved.whitelist = whitelist;
+      await ZBStorage.saveSettings(saved); await refreshSettings(); await detectPage();
+      $('saveSettingsBtn').textContent = '已保存'; setTimeout(() => { $('saveSettingsBtn').textContent = '保存设置'; },1500);
+    } catch (e) { error(e); }
+  };
+  $('fastModeBtn').onclick = async () => {
+    try {
+      const saved=await ZBStorage.getSettings();
+      Object.assign(saved,{blockIntervalMin:0,blockIntervalMax:0,pageInterval:0,blockConcurrency:5});
+      await ZBStorage.saveSettings(saved); await refreshSettings(true);
+      $('actionHint').classList.remove('error');$('actionHint').textContent='快速模式已启用：5 并发、无额外等待，下个批次生效。';
+    } catch(e) {error(e);}
+  };
+  $('taskToggleBtn').onclick = async () => { try { renderTask((await send({action:task.status === 'running' ? 'pauseTask' : 'resumeTask'})).task); } catch (e) { error(e); } };
+  $('taskEndBtn').onclick = async () => { try { renderTask((await send({action:'endTask'})).task); } catch (e) { error(e); } };
+  $('refreshPageBtn').onclick = detectPage;
+  if (new URLSearchParams(location.search).get('panel') === '1') {
+    $('closePanelBtn').hidden = false; $('closePanelBtn').onclick = () => send({action:'closeFloatingPanel'}).catch(error);
   }
-
-  // ── 进度显示 ────────────────────────────────
-  function showProgress(text, pct) {
-    actionProgress.style.display = 'flex';
-    progressText.textContent = text;
-    actionProgress.classList.toggle('is-pending', pct == null);
-
-    if (pct == null) {
-      progressFill.style.width = '8%';
-      return;
-    }
-
-    const nextPercent = Math.max(lastProgressPercent, parseInt(pct, 10) || 0);
-    lastProgressPercent = Math.min(100, nextPercent);
-    progressFill.style.width = lastProgressPercent + '%';
-  }
-
-  // 监听 content script 发来的进度消息
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'blockProgress') {
-      if (msg.reason === 'fetching') {
-        showProgress(msg.name, null);
-      } else {
-        const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) + '%' : '';
-        const status = msg.success ? '已拉黑' : (msg.reason === 'duplicate' ? '跳过' : '失败');
-        showProgress(`${msg.current}/${msg.total} ${msg.name} — ${status}`, pct);
+  chrome.runtime.onMessage.addListener(message => { if (message.type === 'taskUpdate') { renderTask(message.task); renderStats(message.stats); } });
+  chrome.storage.onChanged.addListener((changes,area) => {
+    if (area === 'sync' && changes.settings) refreshSettings().catch(error);
+    if (area === 'local') {
+      let changed=false;
+      for (const [key,value] of Object.entries(changes)) if (key.startsWith('zb:hide:')) {
+        const token=ZBStorage.tokenFrom(key.slice(8));if (!token) continue;
+        if (value.newValue) hiddenUsers.set(token,{urlToken:token,name:value.newValue.name || token});else hiddenUsers.delete(token);changed=true;
       }
-    }
-    if (msg.type === 'autoBlockUpdate') {
-      refresh();
+      if (changed) renderHidden();
     }
   });
-
-  // ── 规则管理 ────────────────────────────────
-  function renderRules(rules) {
-    ruleList.innerHTML = '';
-    noRules.style.display = rules.length ? 'none' : 'block';
-
-    rules.forEach(rule => {
-      const el = document.createElement('div');
-      el.className = 'rule-item';
-      const div = document.createElement('div');
-      div.innerHTML = `<span class="rule-keyword">${escapeHtml(rule.keyword)}</span> <span class="rule-sources">${rule.sources.map(s => SOURCE_LABELS[s]).join('、')}</span>`;
-      el.appendChild(div);
-      const delBtn = document.createElement('button');
-      delBtn.className = 'btn btn-danger';
-      delBtn.textContent = '删除';
-      delBtn.onclick = async () => {
-        await ZBStorage.removeRule(rule.id);
-        refresh();
-      };
-      el.appendChild(delBtn);
-      ruleList.appendChild(el);
-    });
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  function formatAnswerOption(answer) {
-    const author = answer.author ? `${answer.author}：` : '';
-    const excerpt = answer.excerpt || `回答 ${answer.answerId}`;
-    return `${author}${excerpt}`.slice(0, 46);
-  }
-
-  sourceCheckboxes.forEach(cb => {
-    cb.addEventListener('change', saveRuleSourceDefaults);
-  });
-
-  addRuleBtn.onclick = async () => {
-    const keyword = keywordInput.value.trim();
-    if (!keyword) return;
-    const sources = Array.from(document.querySelectorAll('input[name="source"]:checked')).map(cb => cb.value);
-    if (sources.length === 0) { alert('请至少选择一个匹配来源'); return; }
-    await saveRuleSourceDefaults();
-    await ZBStorage.addRule(keyword, sources);
-    keywordInput.value = '';
-    refresh();
-  };
-
-  keywordInput.addEventListener('keydown', e => { if (e.key === 'Enter') addRuleBtn.click(); });
-
-  // ── 设置面板 ────────────────────────────────
-  const settingsToggle = document.getElementById('settingsToggle');
-  const settingsBody = document.getElementById('settingsBody');
-
-  settingsToggle.onclick = () => {
-    const visible = settingsBody.style.display !== 'none';
-    settingsBody.style.display = visible ? 'none' : 'block';
-    settingsToggle.classList.toggle('open', !visible);
-  };
-
-  headerSettingsBtn.onclick = () => {
-    settingsBody.style.display = 'block';
-    settingsToggle.classList.add('open');
-    document.getElementById('intervalMin').focus();
-  };
-
-  document.getElementById('saveSettingsBtn').onclick = async () => {
-    const settings = await ZBStorage.getSettings();
-    const minDelay = parseFloat(document.getElementById('intervalMin').value);
-    const maxDelay = parseFloat(document.getElementById('intervalMax').value);
-    const pageDelay = parseFloat(document.getElementById('pageIntervalInput').value);
-    const blockConcurrency = parseInt(document.getElementById('blockConcurrencyInput').value);
-
-    settings.autoMode = true;
-    settings.blockIntervalMin = Math.max(0, Number.isFinite(minDelay) ? minDelay * 1000 : 0);
-    settings.blockIntervalMax = Math.max(settings.blockIntervalMin, Number.isFinite(maxDelay) ? maxDelay * 1000 : 0);
-    settings.pageInterval = Math.max(0, Number.isFinite(pageDelay) ? pageDelay * 1000 : 0);
-    settings.blockConcurrency = Math.max(1, Math.min(20, Number.isFinite(blockConcurrency) ? blockConcurrency : 5));
-    settings.fastNoDelayMigrated = true;
-    await ZBStorage.saveSettings(settings);
-    refresh();
-    const btn = document.getElementById('saveSettingsBtn');
-    btn.textContent = '已保存';
-    setTimeout(() => btn.textContent = '保存设置', 1500);
-  };
-
-  refreshPageBtn.onclick = () => {
-    pageStatus.textContent = '正在重新识别页面...';
-    actionHint.textContent = '';
-    detectPageActions();
-  };
-
-  // ── 初始化 ──────────────────────────────────
-  refresh();
+  await refreshSettings(true); await detectPage();
+  try { const state = await send({action:'getState'}); renderTask(state.task); renderStats(state.stats); renderHidden(state.hiddenUsers); if (state.error) error(state.error); } catch (e) { error(e); }
 });

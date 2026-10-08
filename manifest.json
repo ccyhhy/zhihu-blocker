@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "知乎批量拉黑",
-  "description": "根据关键词规则自动拉黑知乎用户，支持关注者/粉丝拉黑、回答点赞者拉黑",
-  "version": "1.0.1",
+  "description": "自动逐页拉黑回答赞同者和某人的粉丝；在用户悬浮卡片中屏蔽并隐藏其内容",
+  "version": "1.4.0",
+  "minimum_chrome_version": "110",
   "background": {
     "service_worker": "background.js"
   },
@@ -26,14 +27,28 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.zhihu.com/*"],
+      "matches": [
+        "*://*.zhihu.com/*"
+      ],
       "js": [
         "lib/storage.js",
-        "lib/api.js",
         "content/scanner.js",
         "content/ui.js"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup/popup.html",
+        "popup/popup.css",
+        "popup/popup.js",
+        "lib/storage.js"
+      ],
+      "matches": [
+        "*://*.zhihu.com/*"
+      ]
     }
   ]
 }
